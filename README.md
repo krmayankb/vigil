@@ -359,6 +359,21 @@ python scripts/export_postgres_to_splunk.py \
 
 </details>
 
+## Contributing
+
+Contributions are welcome! Whether you're fixing bugs, adding new MCP integrations, improving agent prompts, or building new skills — we'd love your help.
+
+**Join the community:** Connect with the DeepTempo community on [Discord](https://discord.gg/Kw68sPJU) to discuss ideas, get help, and collaborate with other contributors.
+
+To contribute:
+1. Fork the repo and create a feature branch
+2. Make your changes and test them
+3. Submit a pull request with a clear description
+
+See [QUICKSTART.md](QUICKSTART.md) to get your local environment running.
+
+---
+
 ## License
 
 Apache 2.0 — See [LICENSE](LICENSE)
