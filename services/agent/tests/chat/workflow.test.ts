@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
+import { loadPlugin } from "../../plugins/index.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import { budgetOf, unmeteredQuota } from "../../core/budget.js";
@@ -8,7 +9,7 @@ import type { Harness } from "../../core/loop.js";
 import { nullMemory, recalling } from "../../core/memory.js";
 import { registryOf } from "../../core/registry.js";
 import type { Memory } from "../../core/seams.js";
-import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type RunSpec } from "../../core/spec.js";
+import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import type { StreamEvent } from "../../core/stream.js";
 import { chatEvents } from "../../workflows/chat/sse.js";
@@ -135,10 +136,10 @@ describe("the conversation is the run", () => {
 });
 
 describe("what the workflow refuses", () => {
-  it("refuses an arch whose lead answers in JSON", () => {
-    const spec = { ...specOf(), roles: { workers: {}, lead: { prompt: "x", description: "", output_schema: {}, tools: [], needs: [] } } };
-    const stream = runChat(harnessOf([]), { run_id: RUN, spec, turns: ASKED });
-    return expect(stream.next()).rejects.toThrow(SpecError);
+  // What a conversation answers in is the chat plugin's to say, not the arch's: a
+  // person is answered in prose whatever an arch's lead declares.
+  it("answers in prose, which is what the chat plugin declares", () => {
+    expect(loadPlugin("chat").manifest.conclusion).toEqual({ schema: null });
   });
 
   it("refuses a turn with nothing said in it", () => {
