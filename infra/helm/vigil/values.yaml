@@ -755,6 +755,10 @@ config:
   # budget bound the load instead. See docs/agent-fleet.md.
   ORCHESTRATOR_MAX_AGENTS: "3"
   ORCHESTRATOR_INTAKE_HIGH_WATER: "500"
+  # Overlap at intake skips an entity already in this many live investigations, and
+  # the comma-separated shared-IOC keys listed.
+  TRIAGE_BUSY_ENTITY_THRESHOLD: "5"
+  TRIAGE_OVERLAP_IGNORE: ""
   # One daemon leads; a second replica waits on standby.
   VIGIL_DAEMON_LEADER: "true"
   ORCHESTRATOR_MAX_ITERATIONS: "50"
