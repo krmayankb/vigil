@@ -4,6 +4,9 @@ import type { ToolPrincipal } from "./contracts/tool.js";
 import { budgetOf, FRESH, unmeteredQuota, type Seed } from "./core/budget.js";
 import { httpPrices } from "./core/prices.js";
 import { Limiter } from "./core/limiter.js";
+import { fleetLimitsFrom, openGate, RedisGate, type Gate } from "./core/fleet-gate.js";
+import type { RegisteredTool } from "./contracts/tool.js";
+import { sharedRedis } from "./core/db.js";
 import type { Harness } from "./core/loop.js";
 import { nullMemory } from "./core/memory.js";
 import { httpRecall } from "./core/recall.js";
@@ -42,7 +45,36 @@ const envInt = (name: string, fallback: number): number => {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
 };
-const limiter = new Limiter({ rpm: envInt("VIGIL_LLM_RPM", 500), tpm: envInt("VIGIL_LLM_TPM", 400_000) }, envInt("VIGIL_LLM_CONCURRENCY", 4));
+// The fleet's allowance, shared through Redis by every replica: VIGIL_LLM_FLEET_
+// CONCURRENCY, _RPM and _TPM. Unset, there is none, and each process keeps only its own.
+const fleetLlm = fleetLimitsFrom("VIGIL_LLM_FLEET");
+const llmTimeoutMs = Number(process.env["VIGIL_LLM_TIMEOUT_MS"] ?? 600_000);
+const limiter = new Limiter(
+  { rpm: envInt("VIGIL_LLM_RPM", 500), tpm: envInt("VIGIL_LLM_TPM", 400_000) },
+  envInt("VIGIL_LLM_CONCURRENCY", 4),
+  3,
+  fleetLlm === null ? openGate : new RedisGate(sharedRedis(), "llm", fleetLlm, llmTimeoutMs + 30_000),
+);
+
+// The fleet's allowance per tool backend: a tool's own max_inflight in the config,
+// else VIGIL_TOOL_FLEET_CONCURRENCY for every remote tool. A thousand runs querying
+// one SIEM is the SIEM's outage, whatever each worker allows itself.
+const toolDefault = envInt("VIGIL_TOOL_FLEET_CONCURRENCY", 0);
+const toolGates = new Map<string, Gate>();
+function toolGate(spec: RunSpec): (tool: RegisteredTool) => Gate {
+  return (tool) => {
+    const declared = spec.tools.find((one) => one.id === tool.id)?.["max_inflight"];
+    const limit = typeof declared === "number" && Number.isInteger(declared) && declared > 0 ? declared : toolDefault;
+    if (limit === 0) return openGate;
+    const key = `${tool.id}:${limit}`;
+    let gate = toolGates.get(key);
+    if (gate === undefined) {
+      gate = new RedisGate(sharedRedis(), `tool:${tool.id}`, { concurrency: limit }, tool.bounds.timeoutMs + 30_000);
+      toolGates.set(key, gate);
+    }
+    return gate;
+  };
+}
 
 // Memoised across runs, since a per-run memo dies with the run, but only for as long
 // as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
@@ -86,7 +118,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // Grants nobody here: every run is a plugin on the kernel, which registers the
     // deployment's tools itself and grants them by the plugin's needs.
     registry: registryOf(toolsFrom(spec.tools), {}),
-    dispatch: remoteDispatch({ url: tools, token: internalToken(), ...(principal === undefined ? {} : { principal }) }),
+    dispatch: remoteDispatch({ url: tools, token: internalToken(), gate: toolGate(spec), ...(principal === undefined ? {} : { principal }) }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),
     // Wrapped rather than replaced: whatever the caller passed still answers the
     // cue-shaped recall, and the keyed read is added over the same endpoint the

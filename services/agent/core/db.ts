@@ -1,3 +1,4 @@
+import { Redis as IORedis, type Redis } from "ioredis";
 import type { PoolConfig } from "pg";
 
 // DATABASE_URL wins so CI and the integration test keep passing a DSN, but a
@@ -61,4 +62,16 @@ export function redisConfig(): RedisConfig {
     db: Number(url.pathname.slice(1) || 0),
     ...(url.password === "" ? {} : { password: decodeURIComponent(url.password) }),
   };
+}
+
+// One connection per process for the fleet's shared counters, opened on first use.
+// Separate from BullMQ's, which holds blocking commands on its own.
+let shared: Redis | undefined;
+export function sharedRedis(): Redis {
+  if (shared === undefined) {
+    shared = new IORedis({ ...redisConfig(), maxRetriesPerRequest: 1, enableOfflineQueue: false });
+    // Logged by the gate that finds it unreachable; an unhandled one would crash.
+    shared.on("error", () => undefined);
+  }
+  return shared;
 }

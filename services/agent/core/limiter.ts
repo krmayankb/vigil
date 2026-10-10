@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { openGate, type Gate } from "./fleet-gate.js";
 import { errorFields, logger } from "./log.js";
 
 export interface RateLimit {
@@ -88,16 +89,25 @@ export class Limiter {
     rate: RateLimit,
     concurrency: number,
     private readonly attempts = 3,
+    // The fleet's shared allowance, taken per attempt on top of this process's own.
+    private readonly fleet: Gate = openGate,
   ) {
     this.requests = new Bucket(rate.rpm, rate.rpm / 60_000);
     this.tokens = new Bucket(rate.tpm, rate.tpm / 60_000);
     this.gate = pLimit(concurrency);
   }
 
-  async run<T>(estimatedTokens: number, call: () => Promise<T>): Promise<T> {
+  async run<T>(estimatedTokens: number, call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     return this.gate(async () => {
       await Promise.all([this.requests.take(1), this.tokens.take(estimatedTokens)]);
-      return this.withRetry(call);
+      return this.withRetry(async () => {
+        const release = await this.fleet.acquire(estimatedTokens, signal);
+        try {
+          return await call();
+        } finally {
+          await release();
+        }
+      });
     });
   }
 
