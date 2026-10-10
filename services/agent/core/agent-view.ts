@@ -8,7 +8,7 @@ import {
   type ReviewPayload,
   type RunKind,
   type RunPayload,
-  type StepPayload,
+  type CallPayload,
   type TerminalPayload,
   type UnboundPayload,
 } from "../contracts/events.js";
@@ -36,7 +36,7 @@ export interface AgentProjection {
   summary: string | null;
   // Model turns that asked for tools, and the calls they made.
   turns: number;
-  steps: StepPayload[];
+  calls: CallPayload[];
   // Null until a gateway prices something.
   cost_usd: number | null;
   conclusion: ConclusionPayload | null;
@@ -47,7 +47,7 @@ export interface AgentProjection {
 }
 
 export function agentProjection(runId: string, events: readonly Envelope[]): AgentProjection {
-  const steps: StepPayload[] = [];
+  const steps: CallPayload[] = [];
   const unbound: UnboundPayload[] = [];
   const raised: CheckpointPayload[] = [];
   const answered = new Set<string>();
@@ -62,8 +62,8 @@ export function agentProjection(runId: string, events: readonly Envelope[]): Age
       case "run":
         run = event.payload as Partial<RunPayload>;
         break;
-      case "step":
-        steps.push(event.payload as StepPayload);
+      case "call":
+        steps.push(event.payload as CallPayload);
         break;
       case "unbound":
         unbound.push(event.payload as UnboundPayload);
@@ -103,7 +103,7 @@ export function agentProjection(runId: string, events: readonly Envelope[]): Age
     reason: terminal?.reason ?? "",
     summary: terminal?.summary ?? null,
     turns: new Set(steps.map((step) => step.turn)).size,
-    steps,
+    calls: steps,
     cost_usd: cost,
     conclusion,
     review,
@@ -121,7 +121,7 @@ export interface AgentReplayTurn {
   // What the turn's model calls cost, summed from the spend events written since
   // the previous turn's last result. A call nobody priced adds nothing.
   cost_usd: number;
-  steps: StepPayload[];
+  calls: CallPayload[];
 }
 
 export interface AgentReplay {
@@ -147,16 +147,16 @@ export function agentReplay(runId: string, events: readonly Envelope[]): AgentRe
     }
     if (event.kind === "conclusion") conclusion = event.payload as ConclusionPayload;
     if (event.kind === "review") review = event.payload as ReviewPayload;
-    if (event.kind !== "step") continue;
-    const step = event.payload as StepPayload;
+    if (event.kind !== "call") continue;
+    const step = event.payload as CallPayload;
     let current = turns.at(-1);
     if (current === undefined || current.turn !== step.turn) {
-      current = { turn: step.turn, at: event.ts, thought: step.thought ?? "", cost_usd: 0, steps: [] };
+      current = { turn: step.turn, at: event.ts, thought: step.thought ?? "", cost_usd: 0, calls: [] };
       turns.push(current);
     }
     current.cost_usd = Number((current.cost_usd + pending).toFixed(6));
     pending = 0;
-    current.steps.push(step);
+    current.calls.push(step);
   }
   return { run_id: runId, recall: recalledPayloadOf(events as never), turns, conclusion, review };
 }

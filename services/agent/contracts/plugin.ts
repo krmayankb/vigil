@@ -1,7 +1,9 @@
 // What a plugin is: the files that tell one agent loop what kind of work this is.
-// No control flow. The loop, the ledger, recall, budgets and parking are the
-// kernel's (core/agent.ts); a plugin says what the agent is, what it may need,
-// which playbooks it can load, and what shape it must finish in.
+// The loop, the ledger, recall, budgets, parking and stopping are the kernel's
+// (core/agent.ts). A plugin says what the agent is, what it may need, which
+// playbooks it can load, and what shape it must finish in. A plugin that needs
+// code -- tools that write its own record, a gate before it starts, its own way
+// of ending -- ships hooks beside the manifest (core/agent.ts, PluginHooks).
 
 export interface SkillSpec {
   // What the agent names when it loads one, and the one line it reads to choose.
@@ -12,18 +14,30 @@ export interface SkillSpec {
   body: string;
 }
 
-export interface ConclusionSpec {
-  // JSON schema for the answer the run ends on. Validated by the loop's emission.
+// A structured answer: validated against `schema` by the loop's emission.
+export interface StructuredConclusion {
   schema: Record<string, unknown>;
   // Which field is the one-paragraph summary a reader sees first.
   summary_field: string;
-  // Which field holds the step refs the answer rests on.
-  citations_field: string;
+  // Which field holds the result refs the answer rests on. Absent means the run
+  // cites nothing, and its results are not numbered.
+  citations_field?: string;
+}
+
+// The run ends on prose: whatever the agent said last, once it stopped calling tools.
+export interface ProseConclusion {
+  schema: null;
+}
+
+export type ConclusionSpec = StructuredConclusion | ProseConclusion;
+
+export function isStructured(conclusion: ConclusionSpec): conclusion is StructuredConclusion {
+  return conclusion.schema !== null;
 }
 
 // A second look before a conclusion stands. When the answer's `field` holds one
 // of `guarded`, it stands only if the reviewer upholds it and at least one cited
-// ref is a real step; otherwise the run ends on `fallback`. The asymmetry is the
+// ref is a real result; otherwise the run ends on `fallback`. The asymmetry is the
 // point: some answers are cheap to give and expensive to give wrongly.
 export interface GuardSpec {
   field: string;
@@ -44,6 +58,7 @@ export interface PluginManifest {
   skills: SkillSpec[];
   conclusion: ConclusionSpec;
   guard?: GuardSpec;
-  // Tool turns across the whole run, resumes included.
-  max_turns: number;
+  // Tool turns across the whole run, resumes included. Absent takes the
+  // deployment's runtime.max_turns.
+  max_turns?: number;
 }

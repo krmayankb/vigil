@@ -34,7 +34,7 @@ export const RUN_EVENT_KINDS = [
   // The kernel's own: one tool call and its result, the structured answer a run
   // ends on, and the second look that answer gets. Written for every plugin alike,
   // so one projection, one replay and one distil read them all.
-  "step",
+  "call",
   "conclusion",
   "review",
 ] as const;
@@ -169,7 +169,7 @@ export interface TerminalHandoff {
 // One tool call, journaled the moment its result is in. A plugin run is one long
 // loop rather than a decision per iteration, so these are what a resume rebuilds
 // the transcript from and what a reader cites: ref is the id the model was shown.
-export interface StepPayload {
+export interface CallPayload {
   ref: string;
   // The model turn that asked for it, counted from 1 across resumes.
   turn: number;
@@ -224,7 +224,7 @@ export interface RunEventPayloads {
   patch: PatchPayload;
   resumed: ResumedPayload;
   terminal: TerminalPayload;
-  step: StepPayload;
+  call: CallPayload;
   conclusion: ConclusionPayload;
   review: ReviewPayload;
 }
