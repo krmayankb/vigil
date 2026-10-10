@@ -273,7 +273,7 @@ class OpenAiSurface implements Provider {
       }
       const response = await assemble(stream);
       return response.usage === undefined ? { ...response, usage: guessed(estimate, response) } : response;
-    });
+    }, signal);
   }
 }
 

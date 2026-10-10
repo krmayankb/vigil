@@ -179,6 +179,23 @@ class SOCDaemon:
             tasks.append(task)
             logger.info("%s started", label)
 
+        # Probes first: a standby has nothing else running and must still answer them.
+        if self._metrics_server:
+            start("metrics", self._metrics_server, "Metrics server")
+            logger.info(
+                "Health :%d, prometheus :%d",
+                self._metrics_server.health_port,
+                self._metrics_server.metrics_port,
+            )
+
+        leadership = _leadership()
+        if leadership is not None:
+            if not await leadership.acquire(self._shutdown_event):
+                await asyncio.gather(*tasks, return_exceptions=True)
+                return
+            hold = asyncio.create_task(leadership.hold(self._shutdown_event))
+            tasks.append(hold)
+
         if self._poller:
             start("poller", self._poller, "Data poller")
 
@@ -199,14 +216,6 @@ class SOCDaemon:
             if not self.config.orchestrator.enabled:
                 logger.info("Autonomous orchestrator is disabled")
 
-        if self._metrics_server:
-            start("metrics", self._metrics_server, "Metrics server")
-            logger.info(
-                "Health :%d, prometheus :%d",
-                self._metrics_server.health_port,
-                self._metrics_server.metrics_port,
-            )
-
         logger.info("SOC Daemon fully operational")
 
         # Wait for shutdown signal
@@ -220,6 +229,8 @@ class SOCDaemon:
 
         # Wait for tasks to complete
         await asyncio.gather(*tasks, return_exceptions=True)
+        if leadership is not None:
+            leadership.release()
 
         self._running = False
 
@@ -236,6 +247,25 @@ class SOCDaemon:
     async def stop(self):
         """Stop the daemon gracefully."""
         self._shutdown_event.set()
+
+
+def _leadership():
+    """One daemon leads; on by default, VIGIL_DAEMON_LEADER=false for a single dev box."""
+    from core.config import get_settings
+
+    if not get_settings().vigil_daemon_leader:
+        return None
+    from core.storage.connection import get_db_manager
+    from services.daemon.leader import Leadership
+
+    def connect():
+        engine = get_db_manager().engine
+        if engine is None:
+            raise RuntimeError("no database engine")
+        # A connection of its own, held for as long as this daemon leads.
+        return engine.raw_connection().driver_connection
+
+    return Leadership(connect)
 
 
 def main():

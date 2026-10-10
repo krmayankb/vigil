@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { UnrecoverableError } from "bullmq";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { RunJob } from "../../contracts/job.js";
-import { GatewayExhausted } from "../../core/limiter.js";
+import { GatewayExhausted, ProviderUnavailable } from "../../core/limiter.js";
 import { InProcessLeases } from "../../core/leases.js";
 import { InProcessState } from "../../core/state.js";
-import { advance, handle, MAX_STALLED_RESUMES, resolveSpec, specOf } from "../../worker.js";
+import { advance, handle, MAX_STALLED_RESUMES, PROVIDER_RETRY_MS, resolveSpec, specOf } from "../../worker.js";
 import { SpecError } from "../../core/spec.js";
 import type { HarnessFactory } from "../../harness.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
@@ -426,5 +426,61 @@ describe("a run the gateway refuses because its budget is spent", () => {
 
     expect(caught).toBeInstanceOf(UnrecoverableError);
     expect((caught as Error).message).toBe(REASON);
+  });
+});
+
+// A provider that will not answer is not the run failing. The worker hands the run
+// back, the watchdog brings it round once the delay passes, and it carries on from
+// its ledger -- no terminal, no BullMQ failure, nothing re-run.
+describe("a run whose model provider is unavailable", () => {
+  function unavailable(): HarnessFactory {
+    return (kind, spec, state, memory, seed) => {
+      const harness = scriptedHarness([])(kind, spec, state, memory, seed);
+      return {
+        ...harness,
+        provider: {
+          model: harness.provider.model,
+          provider_type: harness.provider.provider_type,
+          stream() {
+            throw new ProviderUnavailable("the model provider is unavailable (429): slow down", 429);
+          },
+        },
+      };
+    };
+  }
+
+  function investigate(): Extract<RunJob, { reason: "start" }> {
+    const dir = mkdtempSync(join(tmpdir(), "vigil-unavailable-"));
+    const cfg = join(dir, "vigil.config.yaml");
+    copyFileSync(join(FIXTURES, "case.config.yaml"), cfg);
+    return {
+      schema_version: 1,
+      run_id: RUN,
+      run_kind: "investigate",
+      tenant_id: null,
+      enqueued_at: new Date().toISOString(),
+      enqueued_by: "test",
+      reason: "start",
+      request: { arch: "", playbook: join(FIXTURES, "case.playbook.yaml"), config: cfg, prompt: "go" },
+    };
+  }
+
+  it("defers the run instead of ending it, and resumes it once the delay passes", async () => {
+    let now = Date.now();
+    const clock = new InProcessLeases(() => now);
+    const state = new InProcessState();
+
+    await expect(advance(state, clock, investigate(), unavailable())).resolves.toBeUndefined();
+    expect(await state.terminal(RUN)).toBeNull();
+    expect((await state.read(RUN)).some((event) => event.kind === "run")).toBe(true);
+
+    // Not before the delay, so a run in an outage does not spin.
+    expect(await clock.sweep(60_000, 10)).toEqual([]);
+    now += PROVIDER_RETRY_MS * 2;
+    expect(await clock.sweep(60_000, 10)).toEqual([{ run_id: RUN, run_kind: "investigate", lane: "automated" }]);
+  });
+
+  it("does not hand BullMQ a failure to retry", async () => {
+    await expect(handle(new InProcessState(), leases, investigate(), new InProcessDirectiveQueue(), unavailable())).resolves.toBeUndefined();
   });
 });

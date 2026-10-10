@@ -116,3 +116,31 @@ def test_unknown_spend_is_paused_even_on_a_cold_start():
     assert orch._hourly_pause_decision(None, 5.0) is True
     assert orch._hourly_pause_decision(1.0, 5.0) is False
     assert orch._hourly_pause_decision(5.0, 5.0) is True
+
+
+def test_the_fleet_budget_stands_the_hourly_cap_down(monkeypatch):
+    """Once the agent workers hold a fleet budget, the daemon's own cap stands down.
+
+    Two caps counting spend differently would each pause intake for reasons the
+    other cannot see; the fleet budget counts what is reserved as well as spent.
+    """
+    from types import SimpleNamespace
+
+    import services.daemon.orchestrator as orchestrator
+
+    orch = object.__new__(orchestrator.Orchestrator)
+    orch._hourly_cost = lambda: None  # unknown: would pause on its own
+    orch._hourly_cost_limit = lambda: 20.0
+    monkeypatch.setattr(
+        orchestrator,
+        "get_settings",
+        lambda: SimpleNamespace(vigil_fleet_budget_hourly_usd=50.0, vigil_fleet_budget_daily_usd=0.0),
+    )
+    assert orch._hourly_budget_exhausted() is False
+
+    monkeypatch.setattr(
+        orchestrator,
+        "get_settings",
+        lambda: SimpleNamespace(vigil_fleet_budget_hourly_usd=0.0, vigil_fleet_budget_daily_usd=0.0),
+    )
+    assert orch._hourly_budget_exhausted() is True

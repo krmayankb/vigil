@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 # No colon: the Node library refuses a queue name containing one, while the
 # Python library accepts it and writes the keys anyway. Keys are bull:agent-runs:*.
 RUN_QUEUE = "agent-runs"
+# Work a person is waiting on has a queue of its own, drained by worker slots kept
+# for it, so a backlog of automated runs never stands between a person and an
+# answer. services/agent/contracts/job.ts names the same two.
+RUN_QUEUE_HUMAN = "agent-runs-human"
+LANES = ("human", "automated")
+
+# BullMQ priority for an automated run, by severity band: lower runs first. A resume
+# carries none, and BullMQ runs unprioritised jobs ahead of prioritised ones, so
+# work already under way finishes before new work starts.
+SEVERITY_PRIORITY = {"critical": 1, "high": 2, "medium": 3, "low": 4, "unknown": 5}
 
 JOB_SCHEMA_VERSION = 1
 
@@ -54,6 +64,7 @@ def build_start_job(
     request: Dict[str, Any],
     enqueued_by: str,
     tenant_id: Optional[str] = None,
+    lane: str = "automated",
 ) -> Dict[str, Any]:
     return {
         "schema_version": JOB_SCHEMA_VERSION,
@@ -64,6 +75,7 @@ def build_start_job(
         "enqueued_by": enqueued_by,
         "reason": "start",
         "request": request,
+        "lane": _lane(lane),
     }
 
 
@@ -74,6 +86,7 @@ def build_resume_job(
     run_kind: str,
     enqueued_by: str,
     tenant_id: Optional[str] = None,
+    lane: str = "automated",
 ) -> Dict[str, Any]:
     return {
         "schema_version": JOB_SCHEMA_VERSION,
@@ -83,10 +96,22 @@ def build_resume_job(
         "enqueued_at": datetime.now(timezone.utc).isoformat(),
         "enqueued_by": enqueued_by,
         "reason": "resume",
+        "lane": _lane(lane),
     }
 
 
-_queues: "WeakKeyDictionary[asyncio.AbstractEventLoop, Queue]" = WeakKeyDictionary()
+def _lane(lane: str) -> str:
+    if lane not in LANES:
+        raise ValueError(f"lane must be one of {', '.join(LANES)}, not {lane!r}")
+    return lane
+
+
+def priority_for(severity: Optional[str]) -> int:
+    """BullMQ priority for an automated run of this severity band."""
+    return SEVERITY_PRIORITY.get((severity or "unknown").strip().lower(), SEVERITY_PRIORITY["unknown"])
+
+
+_queues: "WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, Queue]]" = WeakKeyDictionary()
 
 _runs_started: Any = None
 
@@ -105,36 +130,41 @@ def _runs_started_counter() -> Any:
 
 # One per event loop, not per call: a Queue per enqueue costs a Redis connection.
 # Keyed by loop because its connection is bound to the one that made it.
-def _run_queue() -> Queue:
+def _run_queue(lane: str = "automated") -> Queue:
     loop = asyncio.get_running_loop()
-    queue = _queues.get(loop)
+    held = _queues.setdefault(loop, {})
+    name = RUN_QUEUE_HUMAN if lane == "human" else RUN_QUEUE
+    queue = held.get(name)
     if queue is None:
-        queue = Queue(RUN_QUEUE, {"connection": _redis_url()})
-        _queues[loop] = queue
+        queue = Queue(name, {"connection": _redis_url()})
+        held[name] = queue
     return queue
 
 
 # Called on shutdown, so the connection does not outlive the loop that made it.
 async def close_run_queue() -> None:
-    queue = _queues.pop(asyncio.get_running_loop(), None)
-    if queue is not None:
+    held = _queues.pop(asyncio.get_running_loop(), None) or {}
+    for queue in held.values():
         await queue.close()
 
 
-async def enqueue_run(job: Dict[str, Any], job_id: Optional[str] = None) -> str:
-    queue = _run_queue()
-    try:
+async def enqueue_run(
+    job: Dict[str, Any], job_id: Optional[str] = None, priority: Optional[int] = None
+) -> str:
+    lane = job.get("lane") or "automated"
+    queue = _run_queue(lane)
+    options: Dict[str, Any] = {
         # jobId is the run id for a start, so a double POST dedupes in BullMQ. A
         # resume takes a fresh id: any derived one repeats, and the queue drops it.
-        enqueued = await queue.add(
-            "run",
-            job,
-            {
-                "jobId": job_id or _default_job_id(job),
-                "attempts": RUN_ATTEMPTS,
-                "backoff": RUN_BACKOFF,
-            },
-        )
+        "jobId": job_id or _default_job_id(job),
+        "attempts": RUN_ATTEMPTS,
+        "backoff": RUN_BACKOFF,
+    }
+    # Only the automated queue is ordered: a person's runs are taken as they come.
+    if priority is not None and lane == "automated":
+        options["priority"] = priority
+    try:
+        enqueued = await queue.add("run", job, options)
         logger.info("enqueued agent run %s (%s)", job["run_id"], job["run_kind"])
         # A resume re-enters a run that was already counted when it started.
         if job.get("reason") == "start":
@@ -145,6 +175,17 @@ async def enqueue_run(job: Dict[str, Any], job_id: Optional[str] = None) -> str:
         # rather than inheriting a connection that may already be gone.
         await close_run_queue()
         raise
+
+
+async def automated_backlog() -> Optional[int]:
+    """Automated runs waiting to start, or None when the queue cannot be read."""
+    try:
+        counts = await _run_queue("automated").getJobCounts("waiting", "prioritized", "delayed")
+        return sum(int(value) for value in counts.values())
+    except Exception as exc:  # noqa: BLE001 -- unknown is answered by the caller
+        logger.warning("could not read the run queue's depth: %s", exc)
+        await close_run_queue()
+        return None
 
 
 def _default_job_id(job: Dict[str, Any]) -> str:

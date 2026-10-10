@@ -1,4 +1,4 @@
-import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
+import { DelayedError, Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
@@ -8,12 +8,15 @@ import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
-import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import { fleetBudget, harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import type { FleetBudget } from "./core/fleet-budget.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
-import { GatewayExhausted } from "./core/limiter.js";
+import { GatewayExhausted, ProviderUnavailable } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
-import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
+import { jobIdFor, laneOf, RUN_QUEUE, RUN_QUEUE_HUMAN, JOB_SCHEMA_VERSION, type Lane, type RunJob } from "./contracts/job.js";
+import { inLane } from "./core/lane.js";
+import { fleetStatus } from "./core/fleet-status.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
 import {
@@ -28,6 +31,7 @@ import { seedFrom } from "./core/budget.js";
 import type { State } from "./core/seams.js";
 import { httpPlaybooks, isReference, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
+import { CachedLedger } from "./ledger/cache.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
 import { runCompose } from "./plugins/compose/workflow.js";
@@ -258,7 +262,7 @@ export async function advance(
   }
 
   const owner = workerName();
-  if (!(await leases.claim(job.run_id, job.run_kind, owner, LEASE_TTL_MS))) return;
+  if (!(await leases.claim(job.run_id, job.run_kind, owner, LEASE_TTL_MS, laneOf(job.lane)))) return;
 
   const halt = new AbortController();
   const renewing = setInterval(() => {
@@ -296,12 +300,33 @@ export async function advance(
     const parked = await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
+    // The provider being down is not this run failing: hand it back to be resumed
+    // once the delay passes, from the ledger, re-running nothing it already did.
+    if (error instanceof ProviderUnavailable && !halt.signal.aborted) {
+      await deferForProvider(state, leases, job, owner, error);
+      return;
+    }
     await abandon(job, error);
     await forget(state, leases, job, owner, error);
     throw error;
   } finally {
     clearInterval(renewing);
   }
+}
+
+// How long a run waits after the provider would not answer. The watchdog resumes it
+// once its claim lapses; a run that keeps meeting an outage keeps waiting, bounded by
+// its own wall-clock budget rather than by a retry count.
+export const PROVIDER_RETRY_MS = (() => {
+  const value = Number(process.env["VIGIL_PROVIDER_RETRY_MS"]);
+  return Number.isInteger(value) && value > 0 ? value : 60_000;
+})();
+
+async function deferForProvider(state: State, leases: Leases, job: RunJob, owner: string, error: ProviderUnavailable): Promise<void> {
+  const delay = Math.round(PROVIDER_RETRY_MS * (0.75 + Math.random() * 0.5));
+  log.warn("model provider unavailable; run deferred", { run_id: job.run_id, status: error.status ?? null, retry_in_ms: delay });
+  await tell(job.run_id, { status: "running", reason: `waiting for the model provider: ${error.message}`, cost_usd: await spentOn(state, job.run_id) });
+  await leases.release(job.run_id, owner, delay);
 }
 
 // A run that failed before it opened a ledger is not a run: no terminal can be
@@ -559,9 +584,12 @@ interface JobOptions {
 // spends between being queued and being picked up. It is not ownership: the row
 // keeps a null owner, so the worker that dequeues the job can claim it, and if no
 // worker ever does the run is offered again once the reservation lapses.
-export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Promise<number> {
+// Each resume goes back to the queue of the lane its run started in, so a person's
+// run that parked or crashed is resumed by the slots kept for people.
+export async function sweepOnce(leases: Leases, queue: Enqueue | ((lane: Lane) => Enqueue), limit = 50): Promise<number> {
   const due = await leases.sweep(LEASE_TTL_MS, limit);
   for (const claim of due) {
+    const target = typeof queue === "function" ? queue(claim.lane ?? "automated") : queue;
     const job: RunJob = {
       schema_version: JOB_SCHEMA_VERSION,
       run_id: claim.run_id,
@@ -570,8 +598,9 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
       enqueued_at: new Date().toISOString(),
       enqueued_by: "watchdog",
       reason: "resume",
+      lane: claim.lane ?? "automated",
     };
-    await queue.add(RUN_QUEUE, job, { jobId: jobIdFor(job, randomUUID()), attempts: RUN_ATTEMPTS, backoff: { ...RUN_BACKOFF } });
+    await target.add(RUN_QUEUE, job, { jobId: jobIdFor(job, randomUUID()), attempts: RUN_ATTEMPTS, backoff: { ...RUN_BACKOFF } });
   }
   return due.length;
 }
@@ -625,8 +654,16 @@ export function runConcurrency(): number {
   return Number.isInteger(asked) && asked > 0 ? asked : DEFAULT_RUN_CONCURRENCY;
 }
 
+// Slots each worker keeps for runs a person is waiting on, apart from the rest.
+export function humanConcurrency(): number {
+  const asked = Number(process.env["VIGIL_HUMAN_RUN_CONCURRENCY"]);
+  return Number.isInteger(asked) && asked > 0 ? asked : Math.max(1, Math.round(runConcurrency() / 4));
+}
+
 export interface Running {
   worker: Worker<RunJob>;
+  // The consumer of the human lane, with slots of its own.
+  human: Worker<RunJob>;
   ledger: LedgerRepository;
   leases: LeaseRepository;
   close: () => Promise<void>;
@@ -637,7 +674,7 @@ export interface Running {
 // one pool, two ways in.
 // The factory is a parameter so a test can stand the model in and leave the
 // queue, the ledger and the leases real, which is what the seam is made of.
-export function startWorker(build: HarnessFactory = harnessFor): Running {
+export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBudget = fleetBudget): Running {
   const pool = new pg.Pool(poolConfig());
   const ledger = new LedgerRepository(pool);
   const leases = new LeaseRepository(pool);
@@ -652,16 +689,44 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // every other run waited it out. A run is almost entirely waiting on a model, so
   // the ceiling is the provider's rate limit rather than this process's CPU -- the
   // limiter already holds that line, and the lease keeps two workers off one run.
-  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(ledger, leases, job.data, directives, build), {
-    connection,
-    concurrency: runConcurrency(),
-    lockDuration: LEASE_TTL_MS * 10,
-  });
-
-  worker.on("failed", logFailure);
-  // Connection-level faults arrive here and nowhere else; an unhandled one would also
-  // crash the process.
-  worker.on("error", (error) => log.error("worker error", errorFields(error)));
+  // Runs read through a cache of their own ledger; dropped when the job lets go,
+  // since a parked run may resume on another worker.
+  const cached = new CachedLedger(ledger);
+  const consume = (lane: Lane, queue: string, concurrency: number): Worker<RunJob> => {
+    const consumer = new Worker<RunJob>(
+      queue,
+      async (job, token) => {
+        const data: RunJob = { ...job.data, lane };
+        // An automated start waits while the fleet's budget is spoken for. A person's
+        // run is never held here, and a resume is work already under way.
+        if (lane === "automated" && data.reason === "start") {
+          const admission = await budget.admit(data.run_id, data.run_kind);
+          if (!admission.admitted) {
+            const delay = Math.round(Math.min(admission.retryInMs, 60_000) * (0.75 + Math.random() * 0.5));
+            log.info("run held for the fleet budget", { run_id: data.run_id, reason: admission.reason, retry_in_ms: delay });
+            await job.moveToDelayed(Date.now() + delay, token);
+            throw new DelayedError();
+          }
+        }
+        try {
+          await inLane(lane, () => handle(cached, leases, data, directives, build), data.run_id);
+          if ((await cached.terminal(data.run_id)) !== null) await budget.settle(data.run_id, data.run_kind);
+        } finally {
+          cached.forget(data.run_id);
+        }
+      },
+      { connection, concurrency, lockDuration: LEASE_TTL_MS * 10 },
+    );
+    consumer.on("failed", logFailure);
+    // Connection-level faults arrive here and nowhere else; an unhandled one would also
+    // crash the process.
+    consumer.on("error", (error) => log.error("worker error", { lane, ...errorFields(error) }));
+    return consumer;
+  };
+  // Automated runs wait in priority order on the main queue; a person's run has its
+  // own queue and its own slots, so no backlog of the first delays the second.
+  const worker = consume("automated", RUN_QUEUE, runConcurrency());
+  const human = consume("human", RUN_QUEUE_HUMAN, humanConcurrency());
 
   // A plain interval rather than a repeatable job: a repeat key lives in Redis and
   // can be lost on a deploy, and a watchdog that has silently stopped looks exactly
@@ -671,8 +736,9 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // the claim is one conditional UPDATE, so only the sweeper that wins a row
   // enqueues it.
   const producer = new Queue<RunJob>(RUN_QUEUE, { connection });
+  const humanProducer = new Queue<RunJob>(RUN_QUEUE_HUMAN, { connection });
   const sweeping = setInterval(() => {
-    void sweepOnce(leases, producer).catch((error: unknown) => {
+    void sweepOnce(leases, (lane) => (lane === "human" ? humanProducer : producer)).catch((error: unknown) => {
       // A sweep that could not read the table tries again next tick. Throwing here
       // would take the process down with every run on it. Said out loud because a
       // watchdog failing every tick looks exactly like one with nothing to do.
@@ -680,10 +746,32 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
     });
   }, SWEEP_EVERY_MS);
 
-  return { worker, ledger, leases, close: async () => {
+  // Said out loud once a minute, so a log alert can page someone: runs that failed
+  // for good since the last look, and runs nobody has picked up in five minutes.
+  let failedBefore: number | null = null;
+  const watching = setInterval(() => {
+    void (async () => {
+      const status = await fleetStatus({ pool, queues: { automated: producer, human: humanProducer } });
+      const queues = status["queues"] as Record<string, Record<string, number>> | { unavailable: string };
+      if (!("unavailable" in queues)) {
+        const failed = Object.values(queues).reduce((total, counts) => total + (counts["failed"] ?? 0), 0);
+        if (failedBefore !== null && failed > failedBefore) {
+          log.error("runs failed for good", { new: failed - failedBefore, total: failed, latest: status["dead_letters"] });
+        }
+        failedBefore = failed;
+      }
+      const leases = status["leases"] as { stalled?: unknown[] } | undefined;
+      if (Array.isArray(leases?.stalled) && leases.stalled.length > 0) {
+        log.warn("runs stalled with no watchdog picking them up", { count: leases.stalled.length, runs: leases.stalled });
+      }
+    })().catch((error: unknown) => log.warn("fleet watch failed", errorFields(error)));
+  }, 60_000);
+
+  return { worker, human, ledger, leases, close: async () => {
     clearInterval(sweeping);
-    await worker.close();
-    await producer.close();
+    clearInterval(watching);
+    await Promise.all([worker.close(), human.close()]);
+    await Promise.all([producer.close(), humanProducer.close()]);
     await pool.end();
   } };
 }
@@ -692,10 +780,13 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
 // ioredis queues commands while it is offline, so a ping against a dropped
 // connection would sit in that queue until the probe timed out -- reporting a hang
 // where the connection state already says "not ready" for free.
-export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
+export function workerReady(...workers: Worker<RunJob>[]): () => Promise<boolean> {
   return async () => {
-    if (!worker.isRunning()) return false;
-    return (await worker.client).status === "ready";
+    for (const worker of workers) {
+      if (!worker.isRunning()) return false;
+      if ((await worker.client).status !== "ready") return false;
+    }
+    return true;
   };
 }
 
@@ -716,7 +807,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count
   // have nothing to say to each other.
-  const probes = healthServer(workerReady(running.worker)).listen(healthPort());
+  const probes = healthServer(workerReady(running.worker, running.human)).listen(healthPort());
   const stop = () => {
     probes.close();
     void running.close();

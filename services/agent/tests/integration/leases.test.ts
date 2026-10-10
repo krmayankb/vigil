@@ -168,3 +168,21 @@ describe("the sweeper claims in the same statement it discovers by", () => {
     expect(await isDue()).toBe(false);
   });
 });
+
+describe("a run keeps the lane it started in", () => {
+  it("stores the first claim's lane, returns it from the sweep, and ignores a later claim's", async () => {
+    expect(await workerA.claim(runId, "investigate", "a", 60_000, "human")).toBe(true);
+    await overdue();
+    expect(await workerB.claim(runId, "investigate", "b", 60_000, "automated")).toBe(true);
+    await overdue();
+    const swept = await workerA.sweep(60_000, 1000);
+    expect(swept.find((claim) => claim.run_id === runId)).toEqual({ run_id: runId, run_kind: "investigate", lane: "human" });
+  });
+
+  it("is automated when the claim does not say", async () => {
+    await workerA.claim(runId, "hunt", "a", 60_000);
+    await overdue();
+    const swept = await workerA.sweep(60_000, 1000);
+    expect(swept.find((claim) => claim.run_id === runId)?.lane).toBe("automated");
+  });
+});

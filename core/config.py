@@ -298,7 +298,21 @@ class Settings(BaseSettings):
     # Orchestrator
     orchestrator_enabled: bool = False
     orchestrator_loop_interval: int = 60
+    # Investigations running at once; 0 means no cap of the daemon's own, leaving
+    # the agent layer's worker slots, fleet gate and fleet budget to bound the load.
     orchestrator_max_agents: int = 3
+    # Automated runs already waiting on the run queue past which the daemon stops
+    # launching more: queueing work faster than workers drain it only ages it.
+    orchestrator_intake_high_water: int = 500
+    # One daemon leads at a time; a second replica waits on standby. Off only for a
+    # single dev box that has no Postgres lock to take.
+    vigil_daemon_leader: bool = True
+    # The fleet budget the agent workers hold every run to (USD; 0 is none). Read
+    # here too because, once either is set, it governs spend and the daemon's own
+    # hourly cap stands down: two caps counting spend differently would each pause
+    # intake for reasons the other cannot see.
+    vigil_fleet_budget_hourly_usd: float = 0.0
+    vigil_fleet_budget_daily_usd: float = 0.0
     orchestrator_max_iterations: int = 50
     orchestrator_max_cost: float = 5.0
     orchestrator_max_hourly_cost: float = 20.0

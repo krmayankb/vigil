@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { Claim, Leases } from "../core/leases.js";
 import type { RunKind } from "../contracts/events.js";
+import type { Lane } from "../contracts/job.js";
 
 // Every deadline is now()'s, never a parameter: a worker with a fast clock would
 // otherwise write a claim_until nobody can reach and hold the run forever.
@@ -9,15 +10,15 @@ export class LeaseRepository implements Leases {
 
   // The ON CONFLICT filter refuses the second worker, so no two drive one run. A
   // null owner is nobody driving, whatever claim_until says, and may be taken now.
-  async claim(runId: string, runKind: RunKind, owner: string, ttlMs: number): Promise<boolean> {
+  async claim(runId: string, runKind: RunKind, owner: string, ttlMs: number, lane: Lane = "automated"): Promise<boolean> {
     const result = await this.pool.query(
-      `INSERT INTO agent_run_leases (run_id, run_kind, owner, claim_until)
-       VALUES ($1, $2, $3, now() + make_interval(secs => $4::double precision))
+      `INSERT INTO agent_run_leases (run_id, run_kind, owner, claim_until, lane)
+       VALUES ($1, $2, $3, now() + make_interval(secs => $4::double precision), $5)
        ON CONFLICT (run_id) DO UPDATE
          SET owner = $3, run_kind = $2, claim_until = now() + make_interval(secs => $4::double precision)
          WHERE agent_run_leases.claim_until < now() OR agent_run_leases.owner IS NULL
        RETURNING run_id`,
-      [runId, runKind, owner, ttlMs / 1000],
+      [runId, runKind, owner, ttlMs / 1000, lane],
     );
     return result.rowCount === 1;
   }
@@ -69,7 +70,7 @@ export class LeaseRepository implements Leases {
          LIMIT $2
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING run_id, run_kind`,
+       RETURNING run_id, run_kind, lane`,
       [ttlMs / 1000, limit],
     );
     return result.rows;

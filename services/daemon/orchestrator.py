@@ -80,7 +80,13 @@ except Exception:
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
-from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
+from core.agents.queue import (
+    RUN_KINDS,
+    automated_backlog,
+    build_start_job,
+    enqueue_run,
+    priority_for,
+)
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
@@ -647,10 +653,10 @@ class Orchestrator:
         )
         # Rows stay queued while the hour is at the cap; they launch once old
         # spend rolls out of the window.
-        if not self._hourly_budget_exhausted():
+        if not self._hourly_budget_exhausted() and await self._room_on_the_run_queue():
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if self._running() >= self.config.max_concurrent_agents:
+                if self._at_capacity():
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
@@ -1079,7 +1085,7 @@ class Orchestrator:
             )
             if not inv_id:
                 continue
-            if self._running() >= self.config.max_concurrent_agents:
+            if self._at_capacity():
                 return
 
             self._update_investigation_status(inv_id, "assigned")
@@ -1215,6 +1221,27 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
+
+    def _at_capacity(self) -> bool:
+        """Whether the daemon's own cap is reached; a cap of 0 or less is no cap."""
+        cap = self.config.max_concurrent_agents
+        return cap > 0 and self._running() >= cap
+
+    async def _room_on_the_run_queue(self) -> bool:
+        """Whether the automated run queue is short of its high-water mark.
+
+        Unknown reads as room: the queue is the agent layer's to bound, and a
+        daemon that stopped launching whenever Redis blinked would starve intake.
+        """
+        backlog = await automated_backlog()
+        if backlog is None or backlog < self.config.intake_high_water:
+            return True
+        logger.info(
+            "run queue holds %d automated runs (high water %d); not launching more",
+            backlog,
+            self.config.intake_high_water,
+        )
+        return False
 
     def _in_flight(self) -> int:
         try:
@@ -1362,13 +1389,19 @@ class Orchestrator:
                 logger.warning("no workflow_runs row for %s: %s", run_id, exc)
                 row = None
 
+            # A human ask is a person waiting; detections and schedules wait their
+            # turn, the most severe first.
+            human = inv_record.get("trigger_type") == "manual"
             job = build_start_job(
                 run_id,
                 run_kind,
                 request,
                 enqueued_by="orchestrator",
+                lane="human" if human else "automated",
             )
-            await enqueue_run(job)
+            await enqueue_run(
+                job, priority=None if human else priority_for(inv_record.get("priority"))
+            )
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
             logger.error("could not enqueue %s: %s", inv_id, exc)
             # Otherwise coverage stays "running" for a hunt that never started.
@@ -1459,7 +1492,8 @@ class Orchestrator:
             shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
         )
         try:
-            await enqueue_run(job, job_id=shadow_id)
+            # A second opinion nobody waits on: behind every real investigation.
+            await enqueue_run(job, job_id=shadow_id, priority=priority_for("unknown"))
         except Exception as exc:
             # Otherwise the row reads as running forever with no job behind it.
             if row is not None:
@@ -1586,7 +1620,11 @@ class Orchestrator:
         """Gate intake on the rolling hour; logs once per pause/resume transition.
 
         Not a write to _enabled: _sync_enabled_from_db would undo it within 5s.
+        Stands down when the fleet budget is set: the agent workers then admit each
+        run against spend plus what running work has reserved, which this cannot see.
         """
+        if self._fleet_budget_governs():
+            return False
         spent = self._hourly_cost()
         limit = self._hourly_cost_limit()
         paused = self._hourly_pause_decision(spent, limit)
@@ -1603,6 +1641,18 @@ class Orchestrator:
                     f"Hourly cost ${spent:.4f} below limit ${limit:.4f}, resuming intake"
                 )
         return paused
+
+    def _fleet_budget_governs(self) -> bool:
+        settings = get_settings()
+        governs = (settings.vigil_fleet_budget_hourly_usd or 0) > 0 or (
+            settings.vigil_fleet_budget_daily_usd or 0
+        ) > 0
+        if governs and not getattr(self, "_fleet_budget_announced", False):
+            self._fleet_budget_announced = True
+            logger.info(
+                "the fleet budget governs spend; the daemon's hourly cap stands down"
+            )
+        return governs
 
     def _hourly_pause_decision(self, spent: Optional[float], limit: float) -> bool:
         # Unknown spend reads as over the cap, including on a cold start.

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { Queue } from "bullmq";
 import pg from "pg";
-import { JOB_SCHEMA_VERSION, RUN_QUEUE, type RunJob } from "../contracts/job.js";
+import { JOB_SCHEMA_VERSION, RUN_QUEUE, RUN_QUEUE_HUMAN, type RunJob } from "../contracts/job.js";
 import { DEFAULTS, startStub, type StubOptions, type StubStats } from "./stub.js";
 
 // A soak run: real workers, real Postgres and Redis, a stub model and estate.
@@ -33,13 +33,16 @@ const { values: flags } = parseArgs({
     "p-tool-error": { type: "string", default: String(DEFAULTS.pToolError) },
     benign: { type: "string", default: String(DEFAULTS.benign) },
     "timeout-min": { type: "string", default: "30" },
+    // Runs a person is waiting on, enqueued on the human lane once the automated
+    // burst is queued; their queue wait is reported apart.
+    human: { type: "string", default: "0" },
     // The worker's model limiter, per process; unset keeps the worker's own defaults.
     "llm-concurrency": { type: "string" },
     "llm-rpm": { type: "string" },
     "llm-tpm": { type: "string" },
     // Postgres pool size per worker; unset keeps pg's default of 10.
     "pg-pool": { type: "string" },
-    database: { type: "string", default: "postgres://soak:soak@127.0.0.1:55432/soak" },
+    database: { type: "string", default: "postgres://soak:soak@127.0.0.1:55433/soak" },
     redis: { type: "string", default: "redis://127.0.0.1:56379/0" },
   },
 });
@@ -49,13 +52,14 @@ const RUNS = Number(flags.runs);
 const WORKERS = Number(flags.workers);
 const CONCURRENCY = Number(flags.concurrency);
 const RATE = Number(flags.rate);
+const HUMAN = Number(flags.human);
 const DATABASE = flags.database!;
 const REDIS = flags.redis!;
 const OUT = join(HERE, "results");
 
 // Emptying a database is the first thing this does; make sure it is the soak's.
-if (!DATABASE.includes(":55432/soak") || !REDIS.includes(":56379")) {
-  console.error("soak refuses to run against anything but the soak containers (postgres :55432/soak, redis :56379)");
+if (!DATABASE.includes(":55433/soak") || !REDIS.includes(":56379")) {
+  console.error("soak refuses to run against anything but the soak containers (postgres :55433/soak, redis :56379)");
   process.exit(2);
 }
 
@@ -107,17 +111,20 @@ function redisConnection(url: string): { host: string; port: number; db: number 
   return { host: parsed.hostname, port: Number(parsed.port || 6379), db: Number(parsed.pathname.slice(1) || 0) };
 }
 
-async function reset(pool: pg.Pool, queue: Queue): Promise<void> {
+async function reset(pool: pg.Pool, queues: readonly Queue[]): Promise<void> {
   await pool.query("TRUNCATE agent_events, agent_run_leases, agent_directives");
-  await queue.obliterate({ force: true });
+  for (const queue of queues) await queue.obliterate({ force: true });
 }
 
 function startWorkers(stubPort: number, logDir: string): ChildProcess[] {
   const stub = `http://127.0.0.1:${stubPort}`;
   return Array.from({ length: WORKERS }, (_, index) => {
     const log = createWriteStream(join(logDir, `worker-${index}.log`));
-    const child = spawn("npx", ["tsx", "worker.ts"], {
+    // tsx directly, in a process group of its own: npx does not pass a signal on, so
+    // killing it left the worker running, and a soak with runs still held never ended.
+    const child = spawn(join(AGENT, "node_modules", ".bin", "tsx"), ["worker.ts"], {
       cwd: AGENT,
+      detached: true,
       env: {
         ...process.env,
         DATABASE_URL: DATABASE,
@@ -158,8 +165,9 @@ async function workersReady(): Promise<void> {
   }
 }
 
-function jobFor(runId: string, index: number): RunJob {
+function jobFor(runId: string, index: number, lane: "human" | "automated" = "automated"): RunJob {
   return {
+    lane,
     schema_version: JOB_SCHEMA_VERSION,
     run_id: runId,
     run_kind: "investigate",
@@ -213,11 +221,19 @@ async function main(): Promise<void> {
   mkdirSync(join(OUT, LABEL), { recursive: true });
   const pool = new pg.Pool({ connectionString: DATABASE, max: 4 });
   const queue = new Queue<RunJob>(RUN_QUEUE, { connection: redisConnection(REDIS) });
-  await reset(pool, queue);
+  const humanQueue = new Queue<RunJob>(RUN_QUEUE_HUMAN, { connection: redisConnection(REDIS) });
+  await reset(pool, [queue, humanQueue]);
 
   const stub = await startStub(stubOptions);
   const workers = startWorkers(stub.port, join(OUT, LABEL));
-  const stopAll = () => workers.forEach((child) => child.kill("SIGTERM"));
+  const stopAll = () =>
+    workers.forEach((child) => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    });
   process.on("SIGINT", () => {
     stopAll();
     process.exit(130);
@@ -228,6 +244,7 @@ async function main(): Promise<void> {
     console.log(`soak ${LABEL}: ${RUNS} runs, ${WORKERS} workers x ${CONCURRENCY}, model ${stubOptions.modelMs}ms, p429 ${stubOptions.p429}`);
 
     const enqueued = new Map<string, number>();
+    const humans = new Set<string>();
     const t0 = Date.now();
     const samples: Sample[] = [];
     const enqueue = (async () => {
@@ -236,6 +253,14 @@ async function main(): Promise<void> {
         enqueued.set(runId, Date.now());
         await queue.add(RUN_QUEUE, jobFor(runId, index), { jobId: runId, attempts: 3, backoff: { type: "exponential", delay: 5000 } });
         if (RATE > 0) await sleep(1000 / RATE);
+      }
+      // A few people asking while the fleet is busy: enqueued behind the whole burst.
+      for (let index = 0; index < HUMAN; index += 1) {
+        const runId = randomUUID();
+        enqueued.set(runId, Date.now());
+        humans.add(runId);
+        await humanQueue.add(RUN_QUEUE, jobFor(runId, RUNS + index, "human"), { jobId: runId, attempts: 3, backoff: { type: "exponential", delay: 5000 } });
+        await sleep(2000);
       }
     })();
 
@@ -269,7 +294,7 @@ async function main(): Promise<void> {
       });
       const last = samples[samples.length - 1]!;
       process.stdout.write(`\r  t=${last.t_s}s done ${done}/${RUNS} active ${last.active} waiting ${last.waiting} failed ${last.failed_jobs} model-inflight ${last.model_concurrent} pg ${last.pg_connections} cpu w${last.workers_cpu}% pg${last.postgres_cpu}%   `);
-      if (done + last.failed_jobs >= RUNS) break;
+      if (done + last.failed_jobs >= RUNS + HUMAN) break;
     }
     await enqueue;
     process.stdout.write("\n");
@@ -293,10 +318,14 @@ async function main(): Promise<void> {
       "SELECT count(*) AS events, pg_total_relation_size('agent_events') AS bytes, count(DISTINCT run_id) FILTER (WHERE run_kind = 'subagent') AS children FROM agent_events",
     );
     const counts = await queue.getJobCounts("completed", "failed", "waiting", "active", "delayed");
+    const humanCounts = await humanQueue.getJobCounts("completed", "failed", "waiting", "active");
+    for (const [key, value] of Object.entries(humanCounts)) counts[`human_${key}`] = value;
 
     const runs = rows.rows;
     const finished = runs.filter((run) => run.ended !== null);
-    const waits = runs.filter((run) => run.started !== null && enqueued.has(run.run_id)).map((run) => (run.started!.getTime() - enqueued.get(run.run_id)!) / 1000);
+    const waitOf = (run: RunRow) => (run.started!.getTime() - enqueued.get(run.run_id)!) / 1000;
+    const waits = runs.filter((run) => run.started !== null && enqueued.has(run.run_id) && !humans.has(run.run_id)).map(waitOf);
+    const humanWaits = runs.filter((run) => run.started !== null && humans.has(run.run_id)).map(waitOf);
     const durations = finished.map((run) => (run.ended!.getTime() - run.started!.getTime()) / 1000);
     const outcomes: Record<string, number> = {};
     const reasons: Record<string, number> = {};
@@ -312,7 +341,7 @@ async function main(): Promise<void> {
     const report = {
       label: LABEL,
       at: new Date().toISOString(),
-      config: { runs: RUNS, workers: WORKERS, concurrency: CONCURRENCY, rate: RATE, llm: { concurrency: flags["llm-concurrency"] ?? "4 (default)", rpm: flags["llm-rpm"] ?? "500 (default)", tpm: flags["llm-tpm"] ?? "400000 (default)" }, pg_pool: flags["pg-pool"] ?? "10 (default)", stub: stubOptions },
+      config: { runs: RUNS, human: HUMAN, workers: WORKERS, concurrency: CONCURRENCY, rate: RATE, llm: { concurrency: flags["llm-concurrency"] ?? "4 (default)", rpm: flags["llm-rpm"] ?? "500 (default)", tpm: flags["llm-tpm"] ?? "400000 (default)" }, pg_pool: flags["pg-pool"] ?? "10 (default)", stub: stubOptions },
       wall_s,
       enqueued: enqueued.size,
       started: runs.length,
@@ -321,6 +350,7 @@ async function main(): Promise<void> {
       failure_reasons: reasons,
       bullmq: counts,
       queue_wait_s: { p50: pct(waits, 50), p95: pct(waits, 95), p99: pct(waits, 99), max: pct(waits, 100) },
+      human_wait_s: HUMAN === 0 ? null : { runs: humanWaits.length, p50: pct(humanWaits, 50), max: pct(humanWaits, 100) },
       run_s: { p50: pct(durations, 50), p95: pct(durations, 95), p99: pct(durations, 99), max: pct(durations, 100) },
       throughput_runs_per_min: span > 0 ? finished.length / span : null,
       per_run: {
@@ -356,6 +386,7 @@ async function main(): Promise<void> {
     stopAll();
     await sleep(1500);
     await queue.close();
+    await humanQueue.close();
     await pool.end();
     stub.server.close();
   }
@@ -375,6 +406,7 @@ function markdown(r: ReturnType<typeof JSON.parse>): string {
     `| wall time | ${f(r.wall_s, 0)}s |`,
     `| throughput | ${r.throughput_runs_per_min === null ? "n/a" : f(r.throughput_runs_per_min)} runs/min |`,
     `| queue wait p50 / p95 / max | ${f(r.queue_wait_s.p50)}s / ${f(r.queue_wait_s.p95)}s / ${f(r.queue_wait_s.max)}s |`,
+    ...(r.human_wait_s === null ? [] : [`| human lane: ${r.human_wait_s.runs} runs, wait p50 / max | ${f(r.human_wait_s.p50)}s / ${f(r.human_wait_s.max)}s |`]),
     `| run time p50 / p95 / max | ${f(r.run_s.p50)}s / ${f(r.run_s.p95)}s / ${f(r.run_s.max)}s |`,
     `| per run: model calls / tool calls / events | ${f(r.per_run.model_calls)} / ${f(r.per_run.tool_calls)} / ${f(r.per_run.events, 0)} |`,
     `| per run cost / total | $${f(r.per_run.cost_usd, 4)} / $${f(r.cost_total_usd, 2)} |`,

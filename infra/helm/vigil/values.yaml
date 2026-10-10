@@ -185,10 +185,9 @@ agentWorker:
       cooldownPeriod: 300
       # How often KEDA polls Redis for the queue depth.
       pollingInterval: 15
-      # BullMQ's waiting list for RUN_QUEUE (services/agent/contracts/job.ts).
-      # Not "agent-runs": that is the queue name, not the Redis key.
-      queueName: "bull:agent-runs:wait"
-      # KEDA scales one replica per listLength items queued.
+      # Runs waiting per replica before KEDA adds one. Read from agent-serve's
+      # /fleet/backlog (both lanes, prioritised runs included); without agentServe,
+      # from the two queues' Redis lists, which miss prioritised runs.
       listLength: "5"
       # Only used when redis.enabled=false AND redis.bitnami.enabled=false.
       # host:port form without scheme or password.
@@ -432,6 +431,7 @@ dbInit:
     - 38_custom_agent_fallback_model.sql
     - 39_case_findings_finding_index.sql
     - 40_drop_custom_workflow_graph_layout.sql
+    - 41_agent_run_leases_lane.sql
   resources:
     requests:
       cpu: 50m
@@ -751,11 +751,31 @@ config:
   # Autonomous orchestrator
   ORCHESTRATOR_ENABLED: "false"
   ORCHESTRATOR_LOOP_INTERVAL: "60"
+  # 0 is no cap of the daemon's own: the agent workers' slots, fleet gate and fleet
+  # budget bound the load instead. See docs/agent-fleet.md.
   ORCHESTRATOR_MAX_AGENTS: "3"
+  ORCHESTRATOR_INTAKE_HIGH_WATER: "500"
+  # One daemon leads; a second replica waits on standby.
+  VIGIL_DAEMON_LEADER: "true"
   ORCHESTRATOR_MAX_ITERATIONS: "50"
   ORCHESTRATOR_MAX_COST: "5.0"
   ORCHESTRATOR_MAX_RUNTIME: "3600"
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
+
+  # The agent fleet's limits (docs/agent-fleet.md). "0" is none: each worker keeps
+  # only its own limits, and the daemon's hourly cap above governs spend. Once a
+  # fleet budget is set, that cap stands down and the workers reserve each run.
+  VIGIL_FLEET_BUDGET_HOURLY_USD: "0"
+  VIGIL_FLEET_BUDGET_DAILY_USD: "0"
+  VIGIL_FLEET_EXPECTED_RUN_USD: "0.05"
+  VIGIL_LLM_FLEET_CONCURRENCY: "0"
+  VIGIL_LLM_FLEET_RPM: "0"
+  VIGIL_LLM_FLEET_TPM: "0"
+  VIGIL_LLM_FLEET_HUMAN_RESERVE: "0"
+  VIGIL_TOOL_FLEET_CONCURRENCY: "0"
+  VIGIL_RUN_CONCURRENCY: "4"
+  VIGIL_HUMAN_RUN_CONCURRENCY: "1"
+  VIGIL_PROVIDER_RETRY_MS: "60000"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
   ORCHESTRATOR_DRY_RUN: "false"
@@ -890,6 +910,10 @@ networkPolicies:
     # policy takes the Deployment down. Set false on Calico or Cilium, which
     # permit node-sourced health checks — then only the backend can reach it.
     allowProbesFromAnyNamespace: true
+    # Where KEDA's operator runs, so it can read /fleet/backlog when
+    # agentWorker.autoscaling.keda.enabled is true.
+    kedaNamespaceSelector:
+      kubernetes.io/metadata.name: keda
 
 # -----------------------------------------------------------------------------
 # Development utilities (issue #117) — off by default, not for production

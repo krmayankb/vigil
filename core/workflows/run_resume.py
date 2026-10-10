@@ -50,7 +50,10 @@ async def resume_run(run_id: str, action_id: str, decided_by: str) -> Dict[str, 
         logger.info("no agent-layer ledger for run %s; nothing to resume", run_id)
         return {"success": False, "run_id": run_id, "error": "no ledger for this run"}
 
-    job = build_resume_job(run_id=run_id, run_kind=run_kind, enqueued_by=decided_by)
+    # A person just answered and is waiting on what the run does with it.
+    job = build_resume_job(
+        run_id=run_id, run_kind=run_kind, enqueued_by=decided_by, lane="human"
+    )
     try:
         # No job id of our own: a failed resume would keep it and wedge the run on
         # the approval it waits for. agent_run_leases refuses the second worker.

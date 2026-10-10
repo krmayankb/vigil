@@ -1,4 +1,5 @@
 import type { RegisteredTool, ToolPrincipal, ToolResult } from "../contracts/tool.js";
+import { openGate, type Gate } from "./fleet-gate.js";
 import type { ToolDispatch } from "./seams.js";
 
 export interface RemoteOptions {
@@ -7,6 +8,9 @@ export interface RemoteOptions {
   // Sent with every call when present; left off the body entirely when not.
   principal?: ToolPrincipal;
   fetch?: typeof globalThis.fetch;
+  // The fleet's shared allowance per tool backend. A slot is waited for before the
+  // tool's own timeout starts: queueing behind other runs is not the tool being slow.
+  gate?: (tool: RegisteredTool) => Gate;
 }
 
 const FAILURE_KINDS = new Set(["invalid_args", "refused", "timeout", "unavailable", "backend_error"]);
@@ -72,47 +76,68 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
       // through this dispatch, so a local implementation was otherwise unreachable.
       if (tool.local) return tool.invoke(args);
 
-      // The tool's timeout and the run's abort both end this call, so whichever
-      // fires first does: a lost lease must not wait out a 30s tool.
-      const held = deadline(tool.bounds.timeoutMs, signal);
-
-      // Unwired around the whole call, body included: reading the body is still
-      // work the run's abort should be able to stop.
+      const gate = options.gate?.(tool) ?? openGate;
+      if (gate === openGate) return reach(tool, args, signal);
+      let release: () => Promise<void>;
       try {
-        let response: Response;
-        try {
-          response = await call(options.url, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
-            body: JSON.stringify({
-              tool: tool.id,
-              args,
-              bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
-              ...(options.principal === undefined ? {} : { principal: options.principal }),
-            }),
-            signal: held.signal,
-          });
-        } catch (error) {
-          // The far side never answered, so nothing is known about the tool itself.
-          // The run first, and before the deadline: when both have fired, nobody is
-          // waiting for this answer, and an aborted run is not a tool that failed.
-          if (signal?.aborted === true) return unavailable("the run was aborted");
-          // Read off the timer rather than off the error's name: a run whose own
-          // signal is a timeout aborts with a TimeoutError, which is the run's
-          // deadline and not this tool's.
-          if (held.timedOut()) return { ok: false, failure: { kind: "timeout", timeoutMs: tool.bounds.timeoutMs } };
-          return unavailable(error instanceof Error ? error.message : String(error));
-        }
-
-        if (!response.ok) return unavailable(`the endpoint answered ${response.status}`);
-        try {
-          return resultOf(await response.json());
-        } catch (error) {
-          return unavailable(error instanceof Error ? error.message : String(error));
-        }
+        release = await gate.acquire(1, signal);
+      } catch {
+        return unavailable("the run was aborted");
+      }
+      try {
+        return await reach(tool, args, signal);
       } finally {
-        held.release();
+        await release();
       }
     },
   };
+
+  async function reach(tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    // The tool's timeout and the run's abort both end this call, so whichever
+    // fires first does: a lost lease must not wait out a 30s tool.
+    const held = deadline(tool.bounds.timeoutMs, signal);
+    // Already over before it started: the run let go while this call waited its turn.
+    if (held.signal.aborted && !held.timedOut()) {
+      held.release();
+      return unavailable("the run was aborted");
+    }
+
+    // Unwired around the whole call, body included: reading the body is still
+    // work the run's abort should be able to stop.
+    try {
+      let response: Response;
+      try {
+        response = await call(options.url, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+          body: JSON.stringify({
+            tool: tool.id,
+            args,
+            bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
+            ...(options.principal === undefined ? {} : { principal: options.principal }),
+          }),
+          signal: held.signal,
+        });
+      } catch (error) {
+        // The far side never answered, so nothing is known about the tool itself.
+        // The run first, and before the deadline: when both have fired, nobody is
+        // waiting for this answer, and an aborted run is not a tool that failed.
+        if (signal?.aborted === true) return unavailable("the run was aborted");
+        // Read off the timer rather than off the error's name: a run whose own
+        // signal is a timeout aborts with a TimeoutError, which is the run's
+        // deadline and not this tool's.
+        if (held.timedOut()) return { ok: false, failure: { kind: "timeout", timeoutMs: tool.bounds.timeoutMs } };
+        return unavailable(error instanceof Error ? error.message : String(error));
+      }
+
+      if (!response.ok) return unavailable(`the endpoint answered ${response.status}`);
+      try {
+        return resultOf(await response.json());
+      } catch (error) {
+        return unavailable(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      held.release();
+    }
+  }
 }

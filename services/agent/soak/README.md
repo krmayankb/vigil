@@ -13,9 +13,9 @@ The soak empties its database and Redis first, so it refuses anything but its ow
 
 ```sh
 docker run -d --name vigil-soak-postgres -e POSTGRES_PASSWORD=soak -e POSTGRES_USER=soak \
-  -e POSTGRES_DB=soak -p 127.0.0.1:55432:5432 postgres:16-alpine -c max_connections=400
+  -e POSTGRES_DB=soak -p 127.0.0.1:55433:5432 postgres:16-alpine -c max_connections=400
 docker run -d --name vigil-soak-redis -p 127.0.0.1:56379:6379 redis:7-alpine
-for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain; do
+for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain 41_agent_run_leases_lane; do
   docker exec -i vigil-soak-postgres psql -q -U soak -d soak < ../../infra/database/init/$f.sql
 done
 ```
@@ -78,3 +78,13 @@ leases, no BullMQ failures, at up to 800 concurrent runs.
 
 **Sizes**: 36 ledger events and about 42 KB per investigate run, so a million
 runs is about 42 GB of ledger before indexes.
+
+## After Phase 1, 2026-10-10
+
+| Run | Change measured | Result |
+|---|---|---|
+| p1a, p1b | Read cache and batched inserts, 8 × 100 | Whole-ledger reads 29k → 3.9k queries; read time 91s → 23s. Throughput flat on this laptop, which is CPU-bound overall |
+| p1c | 429s defer instead of failing, 20% 429s | 600 of 600 completed (was 585); 13 deferred and resumed |
+| p1d | Fleet model gate of 60, 4 × 50 | Peak model calls in flight across the fleet: exactly 60 |
+| p1e | Human lane, 200 automated + 5 human on 2 × 4 | Queue wait: automated 151s median, human 11s |
+| p1f | Fleet budget $5/hour, 300 runs queued | Spent $4.98; 141 completed, 159 waited for the next hour, none failed |

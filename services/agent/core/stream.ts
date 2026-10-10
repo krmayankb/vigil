@@ -2,7 +2,7 @@
 // resolution a default import lands on module.exports.default. The named export
 // exists in both, so this one line satisfies `bundler` and NodeNext alike.
 import { Ajv, type ValidateFunction } from "ajv";
-import { GatewayExhausted } from "./limiter.js";
+import { GatewayExhausted, ProviderUnavailable } from "./limiter.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
 import { hasRecall, isRecalled, recalledNotesOf, recalledNotes, type RecallPayload } from "../contracts/memory.js";
@@ -376,7 +376,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
         turn = yield* this.burn({ messages: this.assembled(tail), tools: [], emit: schema }, tail);
       } catch (error) {
         const tighter = FOLD_LADDER[this.folds];
-        if (tighter === undefined || this.cfg.signal?.aborted === true) throw error;
+        if (tighter === undefined || this.cfg.signal?.aborted === true || hardStop(error)) throw error;
         this.tightened = tighter;
         this.folds += 1;
         this.rejected.push(`the emission call failed (${(error as Error).message}); asked again over a folded transcript`);
@@ -592,7 +592,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
 // call either, and a defect in this process is not a role that could not answer.
 function hardStop(error: unknown): boolean {
   if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError) return true;
-  return error instanceof GatewayExhausted || error instanceof ToolBoundsViolation;
+  return error instanceof GatewayExhausted || error instanceof ProviderUnavailable || error instanceof ToolBoundsViolation;
 }
 
 // The last event a run yields and the outcome it returns are the same thing, so

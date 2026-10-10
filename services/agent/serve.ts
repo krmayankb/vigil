@@ -5,7 +5,7 @@ import { archFor, isHuntLike, registeredKinds } from "./plugins/kinds.js";
 import { cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
-import { poolConfig } from "./core/db.js";
+import { poolConfig, redisConfig, sharedRedis } from "./core/db.js";
 import { errorFields, logger } from "./core/log.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
@@ -25,6 +25,9 @@ import { isAgentRun } from "./core/agent.js";
 import { investigateKernelReplay } from "./plugins/investigate/view.js";
 import { huntKernelReplay } from "./plugins/hunt/view.js";
 import { rootCauseReplay } from "./plugins/rootcause/replay.js";
+import { Queue } from "bullmq";
+import { RUN_QUEUE, RUN_QUEUE_HUMAN, type RunJob } from "./contracts/job.js";
+import { backlog, fleetStatus } from "./core/fleet-status.js";
 
 const log = logger("agent.serve");
 
@@ -295,7 +298,14 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
 
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
 
-export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun): Server {
+// The fleet's state for /fleet, and the runs waiting to start for /fleet/backlog;
+// absent in a process that was not given the queues.
+export interface FleetReader {
+  status: () => Promise<unknown>;
+  backlog: () => Promise<number>;
+}
+
+export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun, fleet?: FleetReader): Server {
   return createServer((req, res) => {
     void (async () => {
       // Before the auth check, because the kubelet has no token. These say only
@@ -308,6 +318,13 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
+
+      if (req.method === "GET" && (url === "/fleet" || url === "/fleet/backlog")) {
+        if (fleet === undefined) return refuse(res, 404, "this process does not read the fleet");
+        const body = url === "/fleet" ? await fleet.status() : { backlog: await fleet.backlog() };
+        res.writeHead(200, { "content-type": "application/json" });
+        return void res.end(JSON.stringify(body));
+      }
 
       const run = req.method === "GET" ? PROJECTION.exec(url) : null;
       if (run !== null) return readFold(state, run[1] as string, "projection", res);
@@ -367,12 +384,22 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   const pool = new pg.Pool(poolConfig());
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
-  const serving = chatServer(new LedgerRepository(pool), cachedReady(serveReady(pool)), harnessFor, (runId) =>
-    verifyLedger(pool, runId),
+  // /fleet reads the run queues and the fleet's counters too. Readiness still asks
+  // only Postgres: chat does not need the queue, and /fleet says when it cannot read it.
+  const connection = redisConfig();
+  const queues = { automated: new Queue<RunJob>(RUN_QUEUE, { connection }), human: new Queue<RunJob>(RUN_QUEUE_HUMAN, { connection }) };
+  const serving = chatServer(
+    new LedgerRepository(pool),
+    cachedReady(serveReady(pool)),
+    harnessFor,
+    (runId) => verifyLedger(pool, runId),
+    { status: () => fleetStatus({ pool, queues, redis: sharedRedis() }), backlog: () => backlog(queues) },
   ).listen(chatPort());
   const stop = () => {
     serving.close();
     void pool.end();
+    void queues.automated.close();
+    void queues.human.close();
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

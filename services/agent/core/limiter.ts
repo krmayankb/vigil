@@ -1,4 +1,6 @@
 import pLimit from "p-limit";
+import { openGate, type Gate } from "./fleet-gate.js";
+import { laneNow } from "./lane.js";
 import { errorFields, logger } from "./log.js";
 
 export interface RateLimit {
@@ -9,6 +11,16 @@ export interface RateLimit {
 // The gateway saying its own budget is gone. Distinct from a Refusal, which is
 // this layer's pool declining a call it has not yet made.
 export class GatewayExhausted extends Error {}
+
+// The provider could not answer after every retry: rate limited, overloaded, or
+// unreachable. Not the run failing -- nothing about the run is wrong, and the same
+// call a minute later may well succeed -- so it ends the attempt rather than the
+// run, and the worker hands the run back to be resumed later.
+export class ProviderUnavailable extends Error {
+  constructor(message: string, readonly status: number | undefined, options?: { cause?: unknown }) {
+    super(message, options);
+  }
+}
 
 const log = logger("agent.limiter");
 
@@ -73,21 +85,36 @@ export class Limiter {
   private readonly requests: Bucket;
   private readonly tokens: Bucket;
   private readonly gate: ReturnType<typeof pLimit>;
+  // Slots of this process's own for runs a person is waiting on, so their calls do
+  // not queue behind every automated run's. Requests and tokens are still shared.
+  private readonly human: ReturnType<typeof pLimit>;
 
   constructor(
     rate: RateLimit,
     concurrency: number,
     private readonly attempts = 3,
+    // The fleet's shared allowance, taken per attempt on top of this process's own.
+    private readonly fleet: Gate = openGate,
+    humanConcurrency = Math.max(1, Math.round(concurrency / 4)),
   ) {
     this.requests = new Bucket(rate.rpm, rate.rpm / 60_000);
     this.tokens = new Bucket(rate.tpm, rate.tpm / 60_000);
     this.gate = pLimit(concurrency);
+    this.human = pLimit(humanConcurrency);
   }
 
-  async run<T>(estimatedTokens: number, call: () => Promise<T>): Promise<T> {
-    return this.gate(async () => {
+  async run<T>(estimatedTokens: number, call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const slots = laneNow() === "human" ? this.human : this.gate;
+    return slots(async () => {
       await Promise.all([this.requests.take(1), this.tokens.take(estimatedTokens)]);
-      return this.withRetry(call);
+      return this.withRetry(async () => {
+        const release = await this.fleet.acquire(estimatedTokens, signal);
+        try {
+          return await call();
+        } finally {
+          await release();
+        }
+      });
     });
   }
 
@@ -106,7 +133,7 @@ export class Limiter {
           blind += 1;
           if (blind > 1) {
             log.error("model call failed, giving up", { status, attempts: attempt + 1, ...errorFields(error) });
-            throw error;
+            throw unavailable(error, status);
           }
         } else if (!RETRYABLE.has(status)) {
           throw error;
@@ -121,8 +148,22 @@ export class Limiter {
         await sleep(backoff + Math.random() * 250);
       }
     }
-    throw lastError;
+    throw unavailable(lastError, statusOf(lastError));
   }
+}
+
+// A defect here or a call this process cancelled has no status either, and neither
+// is the provider being down: those keep their own identity.
+function local(error: unknown): boolean {
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError) return true;
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === "AbortError" || name === "APIUserAbortError";
+}
+
+function unavailable(error: unknown, status: number | undefined): unknown {
+  if (local(error)) return error;
+  const detail = error instanceof Error ? error.message : String(error);
+  return new ProviderUnavailable(`the model provider is unavailable${status === undefined ? "" : ` (${status})`}: ${detail}`, status, { cause: error });
 }
 
 // 4 chars per token is the standard rough estimate; it only has to be close
