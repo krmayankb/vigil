@@ -39,7 +39,7 @@ const { values: flags } = parseArgs({
     "llm-tpm": { type: "string" },
     // Postgres pool size per worker; unset keeps pg's default of 10.
     "pg-pool": { type: "string" },
-    database: { type: "string", default: "postgres://soak:soak@127.0.0.1:55432/soak" },
+    database: { type: "string", default: "postgres://soak:soak@127.0.0.1:55433/soak" },
     redis: { type: "string", default: "redis://127.0.0.1:56379/0" },
   },
 });
@@ -54,8 +54,8 @@ const REDIS = flags.redis!;
 const OUT = join(HERE, "results");
 
 // Emptying a database is the first thing this does; make sure it is the soak's.
-if (!DATABASE.includes(":55432/soak") || !REDIS.includes(":56379")) {
-  console.error("soak refuses to run against anything but the soak containers (postgres :55432/soak, redis :56379)");
+if (!DATABASE.includes(":55433/soak") || !REDIS.includes(":56379")) {
+  console.error("soak refuses to run against anything but the soak containers (postgres :55433/soak, redis :56379)");
   process.exit(2);
 }
 

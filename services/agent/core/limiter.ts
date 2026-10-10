@@ -10,6 +10,16 @@ export interface RateLimit {
 // this layer's pool declining a call it has not yet made.
 export class GatewayExhausted extends Error {}
 
+// The provider could not answer after every retry: rate limited, overloaded, or
+// unreachable. Not the run failing -- nothing about the run is wrong, and the same
+// call a minute later may well succeed -- so it ends the attempt rather than the
+// run, and the worker hands the run back to be resumed later.
+export class ProviderUnavailable extends Error {
+  constructor(message: string, readonly status: number | undefined, options?: { cause?: unknown }) {
+    super(message, options);
+  }
+}
+
 const log = logger("agent.limiter");
 
 const RETRYABLE = new Set([429, 500, 502, 503]);
@@ -106,7 +116,7 @@ export class Limiter {
           blind += 1;
           if (blind > 1) {
             log.error("model call failed, giving up", { status, attempts: attempt + 1, ...errorFields(error) });
-            throw error;
+            throw unavailable(error, status);
           }
         } else if (!RETRYABLE.has(status)) {
           throw error;
@@ -121,8 +131,22 @@ export class Limiter {
         await sleep(backoff + Math.random() * 250);
       }
     }
-    throw lastError;
+    throw unavailable(lastError, statusOf(lastError));
   }
+}
+
+// A defect here or a call this process cancelled has no status either, and neither
+// is the provider being down: those keep their own identity.
+function local(error: unknown): boolean {
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError) return true;
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === "AbortError" || name === "APIUserAbortError";
+}
+
+function unavailable(error: unknown, status: number | undefined): unknown {
+  if (local(error)) return error;
+  const detail = error instanceof Error ? error.message : String(error);
+  return new ProviderUnavailable(`the model provider is unavailable${status === undefined ? "" : ` (${status})`}: ${detail}`, status, { cause: error });
 }
 
 // 4 chars per token is the standard rough estimate; it only has to be close

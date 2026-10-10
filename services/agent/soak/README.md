@@ -13,7 +13,7 @@ The soak empties its database and Redis first, so it refuses anything but its ow
 
 ```sh
 docker run -d --name vigil-soak-postgres -e POSTGRES_PASSWORD=soak -e POSTGRES_USER=soak \
-  -e POSTGRES_DB=soak -p 127.0.0.1:55432:5432 postgres:16-alpine -c max_connections=400
+  -e POSTGRES_DB=soak -p 127.0.0.1:55433:5432 postgres:16-alpine -c max_connections=400
 docker run -d --name vigil-soak-redis -p 127.0.0.1:56379:6379 redis:7-alpine
 for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain; do
   docker exec -i vigil-soak-postgres psql -q -U soak -d soak < ../../infra/database/init/$f.sql

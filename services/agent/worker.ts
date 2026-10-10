@@ -11,7 +11,7 @@ import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
-import { GatewayExhausted } from "./core/limiter.js";
+import { GatewayExhausted, ProviderUnavailable } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
@@ -28,6 +28,7 @@ import { seedFrom } from "./core/budget.js";
 import type { State } from "./core/seams.js";
 import { httpPlaybooks, isReference, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
+import { CachedLedger } from "./ledger/cache.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
 import { runCompose } from "./plugins/compose/workflow.js";
@@ -296,12 +297,33 @@ export async function advance(
     const parked = await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner, parked);
   } catch (error) {
+    // The provider being down is not this run failing: hand it back to be resumed
+    // once the delay passes, from the ledger, re-running nothing it already did.
+    if (error instanceof ProviderUnavailable && !halt.signal.aborted) {
+      await deferForProvider(state, leases, job, owner, error);
+      return;
+    }
     await abandon(job, error);
     await forget(state, leases, job, owner, error);
     throw error;
   } finally {
     clearInterval(renewing);
   }
+}
+
+// How long a run waits after the provider would not answer. The watchdog resumes it
+// once its claim lapses; a run that keeps meeting an outage keeps waiting, bounded by
+// its own wall-clock budget rather than by a retry count.
+export const PROVIDER_RETRY_MS = (() => {
+  const value = Number(process.env["VIGIL_PROVIDER_RETRY_MS"]);
+  return Number.isInteger(value) && value > 0 ? value : 60_000;
+})();
+
+async function deferForProvider(state: State, leases: Leases, job: RunJob, owner: string, error: ProviderUnavailable): Promise<void> {
+  const delay = Math.round(PROVIDER_RETRY_MS * (0.75 + Math.random() * 0.5));
+  log.warn("model provider unavailable; run deferred", { run_id: job.run_id, status: error.status ?? null, retry_in_ms: delay });
+  await tell(job.run_id, { status: "running", reason: `waiting for the model provider: ${error.message}`, cost_usd: await spentOn(state, job.run_id) });
+  await leases.release(job.run_id, owner, delay);
 }
 
 // A run that failed before it opened a ledger is not a run: no terminal can be
@@ -652,7 +674,10 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // every other run waited it out. A run is almost entirely waiting on a model, so
   // the ceiling is the provider's rate limit rather than this process's CPU -- the
   // limiter already holds that line, and the lease keeps two workers off one run.
-  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(ledger, leases, job.data, directives, build), {
+  // Runs read through a cache of their own ledger; dropped when the job lets go,
+  // since a parked run may resume on another worker.
+  const cached = new CachedLedger(ledger);
+  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(cached, leases, job.data, directives, build).finally(() => cached.forget(job.data.run_id)), {
     connection,
     concurrency: runConcurrency(),
     lockDuration: LEASE_TTL_MS * 10,
