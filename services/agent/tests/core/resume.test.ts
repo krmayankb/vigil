@@ -77,6 +77,22 @@ describe("resolving a run", () => {
 
   // Per-run, so it rides the job rather than the playbook the reference names --
   // which is a definition every run of it shares.
+  // The workflow's plugin rides the job; the one the run ran on is journaled with the
+  // spec, and one the kind does not run on is refused before the ledger opens.
+  it("journals the plugin the run ran on, and refuses one its kind does not run", async () => {
+    const named = startJob();
+    named.request.plugin = "hunt";
+    expect((await resolveSpec(named)).sections["plugin"]).toBe("hunt");
+
+    const unnamed = startJob();
+    unnamed.request.plugin = null;
+    expect((await resolveSpec(unnamed)).sections["plugin"]).toBe("hunt");
+
+    const other = startJob();
+    other.request.plugin = "investigate";
+    await expect(resolveSpec(other)).rejects.toThrow(/run kind hunt runs on plugin hunt; this job names investigate/);
+  });
+
   it("carries what this run asked about into the sections the workflow reads", async () => {
     const job = startJob();
     job.request.hypotheses = ["lateral movement over SMB"];
