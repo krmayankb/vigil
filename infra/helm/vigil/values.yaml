@@ -432,6 +432,7 @@ dbInit:
     - 38_custom_agent_fallback_model.sql
     - 39_case_findings_finding_index.sql
     - 40_drop_custom_workflow_graph_layout.sql
+    - 41_agent_run_leases_lane.sql
   resources:
     requests:
       cpu: 50m

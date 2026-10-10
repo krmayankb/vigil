@@ -211,6 +211,21 @@ describe("a run nobody is working on is put back on the queue", () => {
     expect(queue.jobs[0]?.enqueued_by).toBe("watchdog");
   });
 
+  // A person's run that parked or crashed goes back to the slots kept for people, and
+  // the lane is the run's own: a later claim from the other queue does not move it.
+  it("resumes a run on the queue of the lane it started in", async () => {
+    await leases.claim(RUN, "investigate", "worker-a", LEASE_TTL_MS, "human");
+    clock += LEASE_TTL_MS + 1;
+    await leases.claim(RUN, "investigate", "worker-b", LEASE_TTL_MS, "automated");
+    clock += LEASE_TTL_MS + 1;
+
+    const human = recorder();
+    const automated = recorder();
+    expect(await sweepOnce(leases, (lane) => (lane === "human" ? human : automated))).toBe(1);
+    expect(human.jobs.map((job) => [job.run_id, job.lane])).toEqual([[RUN, "human"]]);
+    expect(automated.jobs).toEqual([]);
+  });
+
   // Claiming is part of discovering, so the run is not handed out twice in the
   // same interval however many sweepers are looking.
   it("hands a due run to exactly one sweeper", async () => {

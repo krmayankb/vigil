@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { openGate, type Gate } from "./fleet-gate.js";
+import { laneNow } from "./lane.js";
 import { errorFields, logger } from "./log.js";
 
 export interface RateLimit {
@@ -84,6 +85,9 @@ export class Limiter {
   private readonly requests: Bucket;
   private readonly tokens: Bucket;
   private readonly gate: ReturnType<typeof pLimit>;
+  // Slots of this process's own for runs a person is waiting on, so their calls do
+  // not queue behind every automated run's. Requests and tokens are still shared.
+  private readonly human: ReturnType<typeof pLimit>;
 
   constructor(
     rate: RateLimit,
@@ -91,14 +95,17 @@ export class Limiter {
     private readonly attempts = 3,
     // The fleet's shared allowance, taken per attempt on top of this process's own.
     private readonly fleet: Gate = openGate,
+    humanConcurrency = Math.max(1, Math.round(concurrency / 4)),
   ) {
     this.requests = new Bucket(rate.rpm, rate.rpm / 60_000);
     this.tokens = new Bucket(rate.tpm, rate.tpm / 60_000);
     this.gate = pLimit(concurrency);
+    this.human = pLimit(humanConcurrency);
   }
 
   async run<T>(estimatedTokens: number, call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    return this.gate(async () => {
+    const slots = laneNow() === "human" ? this.human : this.gate;
+    return slots(async () => {
       await Promise.all([this.requests.take(1), this.tokens.take(estimatedTokens)]);
       return this.withRetry(async () => {
         const release = await this.fleet.acquire(estimatedTokens, signal);

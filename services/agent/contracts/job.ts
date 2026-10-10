@@ -9,6 +9,21 @@ export const JOB_SCHEMA_VERSION = 1;
 // its Python library accepts it and writes the keys anyway. Keys are bull:agent-runs:*.
 export const RUN_QUEUE = "agent-runs";
 
+// Work a person is waiting on -- a run they started from the console, a question
+// they asked -- has its own queue and its own worker slots, so a backlog of
+// automated runs never stands between a person and an answer.
+export const RUN_QUEUE_HUMAN = "agent-runs-human";
+export const LANES = ["human", "automated"] as const;
+export type Lane = (typeof LANES)[number];
+
+export function laneOf(value: unknown): Lane {
+  return value === "human" ? "human" : "automated";
+}
+
+export function queueFor(lane: Lane): string {
+  return lane === "human" ? RUN_QUEUE_HUMAN : RUN_QUEUE;
+}
+
 interface JobBase {
   schema_version: number;
   run_id: string;
@@ -16,6 +31,8 @@ interface JobBase {
   tenant_id: string | null;
   enqueued_at: string;
   enqueued_by: string;
+  // Absent is automated, so a job queued before lanes existed still parses.
+  lane?: Lane;
 }
 
 // References rather than resolved content: the worker resolves them and journals

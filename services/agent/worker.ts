@@ -13,7 +13,8 @@ import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted, ProviderUnavailable } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
-import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
+import { jobIdFor, laneOf, RUN_QUEUE, RUN_QUEUE_HUMAN, JOB_SCHEMA_VERSION, type Lane, type RunJob } from "./contracts/job.js";
+import { inLane } from "./core/lane.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
 import {
@@ -259,7 +260,7 @@ export async function advance(
   }
 
   const owner = workerName();
-  if (!(await leases.claim(job.run_id, job.run_kind, owner, LEASE_TTL_MS))) return;
+  if (!(await leases.claim(job.run_id, job.run_kind, owner, LEASE_TTL_MS, laneOf(job.lane)))) return;
 
   const halt = new AbortController();
   const renewing = setInterval(() => {
@@ -581,9 +582,12 @@ interface JobOptions {
 // spends between being queued and being picked up. It is not ownership: the row
 // keeps a null owner, so the worker that dequeues the job can claim it, and if no
 // worker ever does the run is offered again once the reservation lapses.
-export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Promise<number> {
+// Each resume goes back to the queue of the lane its run started in, so a person's
+// run that parked or crashed is resumed by the slots kept for people.
+export async function sweepOnce(leases: Leases, queue: Enqueue | ((lane: Lane) => Enqueue), limit = 50): Promise<number> {
   const due = await leases.sweep(LEASE_TTL_MS, limit);
   for (const claim of due) {
+    const target = typeof queue === "function" ? queue(claim.lane ?? "automated") : queue;
     const job: RunJob = {
       schema_version: JOB_SCHEMA_VERSION,
       run_id: claim.run_id,
@@ -592,8 +596,9 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
       enqueued_at: new Date().toISOString(),
       enqueued_by: "watchdog",
       reason: "resume",
+      lane: claim.lane ?? "automated",
     };
-    await queue.add(RUN_QUEUE, job, { jobId: jobIdFor(job, randomUUID()), attempts: RUN_ATTEMPTS, backoff: { ...RUN_BACKOFF } });
+    await target.add(RUN_QUEUE, job, { jobId: jobIdFor(job, randomUUID()), attempts: RUN_ATTEMPTS, backoff: { ...RUN_BACKOFF } });
   }
   return due.length;
 }
@@ -647,8 +652,16 @@ export function runConcurrency(): number {
   return Number.isInteger(asked) && asked > 0 ? asked : DEFAULT_RUN_CONCURRENCY;
 }
 
+// Slots each worker keeps for runs a person is waiting on, apart from the rest.
+export function humanConcurrency(): number {
+  const asked = Number(process.env["VIGIL_HUMAN_RUN_CONCURRENCY"]);
+  return Number.isInteger(asked) && asked > 0 ? asked : Math.max(1, Math.round(runConcurrency() / 4));
+}
+
 export interface Running {
   worker: Worker<RunJob>;
+  // The consumer of the human lane, with slots of its own.
+  human: Worker<RunJob>;
   ledger: LedgerRepository;
   leases: LeaseRepository;
   close: () => Promise<void>;
@@ -677,16 +690,22 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // Runs read through a cache of their own ledger; dropped when the job lets go,
   // since a parked run may resume on another worker.
   const cached = new CachedLedger(ledger);
-  const worker = new Worker<RunJob>(RUN_QUEUE, (job) => handle(cached, leases, job.data, directives, build).finally(() => cached.forget(job.data.run_id)), {
-    connection,
-    concurrency: runConcurrency(),
-    lockDuration: LEASE_TTL_MS * 10,
-  });
-
-  worker.on("failed", logFailure);
-  // Connection-level faults arrive here and nowhere else; an unhandled one would also
-  // crash the process.
-  worker.on("error", (error) => log.error("worker error", errorFields(error)));
+  const consume = (lane: Lane, queue: string, concurrency: number): Worker<RunJob> => {
+    const consumer = new Worker<RunJob>(
+      queue,
+      (job) => inLane(lane, () => handle(cached, leases, { ...job.data, lane }, directives, build)).finally(() => cached.forget(job.data.run_id)),
+      { connection, concurrency, lockDuration: LEASE_TTL_MS * 10 },
+    );
+    consumer.on("failed", logFailure);
+    // Connection-level faults arrive here and nowhere else; an unhandled one would also
+    // crash the process.
+    consumer.on("error", (error) => log.error("worker error", { lane, ...errorFields(error) }));
+    return consumer;
+  };
+  // Automated runs wait in priority order on the main queue; a person's run has its
+  // own queue and its own slots, so no backlog of the first delays the second.
+  const worker = consume("automated", RUN_QUEUE, runConcurrency());
+  const human = consume("human", RUN_QUEUE_HUMAN, humanConcurrency());
 
   // A plain interval rather than a repeatable job: a repeat key lives in Redis and
   // can be lost on a deploy, and a watchdog that has silently stopped looks exactly
@@ -696,8 +715,9 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   // the claim is one conditional UPDATE, so only the sweeper that wins a row
   // enqueues it.
   const producer = new Queue<RunJob>(RUN_QUEUE, { connection });
+  const humanProducer = new Queue<RunJob>(RUN_QUEUE_HUMAN, { connection });
   const sweeping = setInterval(() => {
-    void sweepOnce(leases, producer).catch((error: unknown) => {
+    void sweepOnce(leases, (lane) => (lane === "human" ? humanProducer : producer)).catch((error: unknown) => {
       // A sweep that could not read the table tries again next tick. Throwing here
       // would take the process down with every run on it. Said out loud because a
       // watchdog failing every tick looks exactly like one with nothing to do.
@@ -705,10 +725,10 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
     });
   }, SWEEP_EVERY_MS);
 
-  return { worker, ledger, leases, close: async () => {
+  return { worker, human, ledger, leases, close: async () => {
     clearInterval(sweeping);
-    await worker.close();
-    await producer.close();
+    await Promise.all([worker.close(), human.close()]);
+    await Promise.all([producer.close(), humanProducer.close()]);
     await pool.end();
   } };
 }
@@ -717,10 +737,13 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
 // ioredis queues commands while it is offline, so a ping against a dropped
 // connection would sit in that queue until the probe timed out -- reporting a hang
 // where the connection state already says "not ready" for free.
-export function workerReady(worker: Worker<RunJob>): () => Promise<boolean> {
+export function workerReady(...workers: Worker<RunJob>[]): () => Promise<boolean> {
   return async () => {
-    if (!worker.isRunning()) return false;
-    return (await worker.client).status === "ready";
+    for (const worker of workers) {
+      if (!worker.isRunning()) return false;
+      if ((await worker.client).status !== "ready") return false;
+    }
+    return true;
   };
 }
 
@@ -741,7 +764,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   // Probes only. Chat moved to serve.ts when #635 split the two into Deployments
   // that scale on different things -- a queue's depth and an open connection count
   // have nothing to say to each other.
-  const probes = healthServer(workerReady(running.worker)).listen(healthPort());
+  const probes = healthServer(workerReady(running.worker, running.human)).listen(healthPort());
   const stop = () => {
     probes.close();
     void running.close();

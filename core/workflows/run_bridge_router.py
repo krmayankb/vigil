@@ -513,6 +513,8 @@ async def _enqueue_root_cause(
             # approval an operator is asked to answer both name the escalation's
             # hash where every other run names api, watchdog or a username.
             actor="handoff",
+            # An escalation the platform raised, not a person's request.
+            lane="automated",
         )
     finally:
         # asyncio.run closes the loop this ran on, and _run_queue caches one Queue

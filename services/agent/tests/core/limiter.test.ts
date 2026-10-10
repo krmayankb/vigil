@@ -33,3 +33,19 @@ describe("the model limiter, when the provider will not answer", () => {
     await expect(limiter().run(10, failing(cancelled))).rejects.toBe(cancelled);
   });
 });
+
+describe("the model limiter, with a person waiting", () => {
+  it("gives a human run's call its own slot while automated calls fill theirs", async () => {
+    const { inLane } = await import("../../core/lane.js");
+    const limiter = new Limiter({ rpm: 10_000, tpm: 10_000_000 }, 1, 1, undefined, 1);
+    let release!: () => void;
+    const held = new Promise<void>((done) => (release = done));
+    const automated = limiter.run(1, () => held);
+    const queued = limiter.run(1, async () => "automated, second");
+    const human = await inLane("human", () => limiter.run(1, async () => "human"));
+    expect(human).toBe("human");
+    release();
+    await automated;
+    expect(await queued).toBe("automated, second");
+  });
+});

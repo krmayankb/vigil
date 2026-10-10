@@ -80,7 +80,7 @@ except Exception:
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
-from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
+from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run, priority_for
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
@@ -1362,13 +1362,19 @@ class Orchestrator:
                 logger.warning("no workflow_runs row for %s: %s", run_id, exc)
                 row = None
 
+            # A human ask is a person waiting; detections and schedules wait their
+            # turn, the most severe first.
+            human = inv_record.get("trigger_type") == "manual"
             job = build_start_job(
                 run_id,
                 run_kind,
                 request,
                 enqueued_by="orchestrator",
+                lane="human" if human else "automated",
             )
-            await enqueue_run(job)
+            await enqueue_run(
+                job, priority=None if human else priority_for(inv_record.get("priority"))
+            )
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
             logger.error("could not enqueue %s: %s", inv_id, exc)
             # Otherwise coverage stays "running" for a hunt that never started.
@@ -1459,7 +1465,8 @@ class Orchestrator:
             shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
         )
         try:
-            await enqueue_run(job, job_id=shadow_id)
+            # A second opinion nobody waits on: behind every real investigation.
+            await enqueue_run(job, job_id=shadow_id, priority=priority_for("unknown"))
         except Exception as exc:
             # Otherwise the row reads as running forever with no job behind it.
             if row is not None:

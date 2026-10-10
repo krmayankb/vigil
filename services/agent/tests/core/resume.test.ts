@@ -477,7 +477,7 @@ describe("a run whose model provider is unavailable", () => {
     // Not before the delay, so a run in an outage does not spin.
     expect(await clock.sweep(60_000, 10)).toEqual([]);
     now += PROVIDER_RETRY_MS * 2;
-    expect(await clock.sweep(60_000, 10)).toEqual([{ run_id: RUN, run_kind: "investigate" }]);
+    expect(await clock.sweep(60_000, 10)).toEqual([{ run_id: RUN, run_kind: "investigate", lane: "automated" }]);
   });
 
   it("does not hand BullMQ a failure to retry", async () => {

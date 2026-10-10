@@ -54,6 +54,8 @@ const limiter = new Limiter(
   envInt("VIGIL_LLM_CONCURRENCY", 4),
   3,
   fleetLlm === null ? openGate : new RedisGate(sharedRedis(), "llm", fleetLlm, llmTimeoutMs + 30_000),
+  // Model calls in flight for the human lane, beside the automated ones.
+  envInt("VIGIL_LLM_HUMAN_CONCURRENCY", Math.max(1, Math.round(envInt("VIGIL_LLM_CONCURRENCY", 4) / 4))),
 );
 
 // The fleet's allowance per tool backend: a tool's own max_inflight in the config,

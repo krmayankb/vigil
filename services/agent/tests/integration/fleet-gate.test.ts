@@ -68,3 +68,14 @@ describe("the fleet gate, shared through Redis", () => {
     down.disconnect();
   });
 });
+
+describe("the fleet gate keeps slots for a person's run", () => {
+  it("stops automated runs short of the reserve, and lets a human run use it", async () => {
+    const { inLane } = await import("../../core/lane.js");
+    const gate = new RedisGate(redis, scope(), { concurrency: 3, humanReserve: 1 }, 60_000);
+    await gate.acquire(1);
+    await gate.acquire(1);
+    expect(await settled(gate.acquire(1))).toBe(false);
+    expect(await settled(inLane("human", () => gate.acquire(1)))).toBe(true);
+  });
+});

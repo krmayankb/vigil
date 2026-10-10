@@ -435,7 +435,7 @@ class TestShadowAdjudication:
         assert shadow["run_id"] != run_id_for(inv_id)
         assert str(uuid.UUID(shadow["run_id"])) == shadow["run_id"]
         # Same job id as run id, so a restart re-enqueue dedupes in BullMQ.
-        assert enqueued.await_args_list[1].kwargs == {"job_id": shadow["run_id"]}
+        assert enqueued.await_args_list[1].kwargs == {"job_id": shadow["run_id"], "priority": 5}
 
         req, shadow_req = real["request"], shadow["request"]
         assert shadow_req["playbook"] == "workflow:shadow-adjudication"

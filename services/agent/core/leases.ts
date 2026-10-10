@@ -1,4 +1,5 @@
 import type { RunKind } from "../contracts/events.js";
+import type { Lane } from "../contracts/job.js";
 
 // Not one of the four seams: a turn has no business renewing a lease. It belongs
 // to whatever drives a run, and to the sweeper that reclaims one nobody drives.
@@ -25,12 +26,15 @@ export const PARK_EVERY_MS = ms("VIGIL_PARK_POLL_MS", 60_000);
 export interface Claim {
   run_id: string;
   run_kind: RunKind;
+  // The lane the run started in, so a resume goes back to the same queue.
+  lane: Lane;
 }
 
 export interface Leases {
   // False when someone else is driving it. A null owner is nobody driving -- reserved
   // or parked -- so the job's holder may take it. Refusal is the good case, not a failure.
-  claim(runId: string, runKind: RunKind, owner: string, ttlMs: number): Promise<boolean>;
+  // The lane is the run's from its first claim; a later claim does not change it.
+  claim(runId: string, runKind: RunKind, owner: string, ttlMs: number, lane?: Lane): Promise<boolean>;
   // False when the claim was stolen, which tells the holder it has been declared
   // dead and should stop paying for work nobody will record.
   renew(runId: string, owner: string, ttlMs: number): Promise<boolean>;
@@ -51,6 +55,7 @@ interface Held {
   run_kind: RunKind;
   owner: string | null;
   claim_until: number;
+  lane: Lane;
 }
 
 // The Leases port without Postgres, so a resume test needs no database. This
@@ -60,11 +65,11 @@ export class InProcessLeases implements Leases {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  async claim(runId: string, runKind: RunKind, owner: string, ttlMs: number): Promise<boolean> {
+  async claim(runId: string, runKind: RunKind, owner: string, ttlMs: number, lane: Lane = "automated"): Promise<boolean> {
     const held = this.runs.get(runId);
     const driven = held !== undefined && held.owner !== null && held.claim_until > this.now();
     if (driven) return false;
-    this.runs.set(runId, { run_kind: runKind, owner, claim_until: this.now() + ttlMs });
+    this.runs.set(runId, { run_kind: runKind, owner, claim_until: this.now() + ttlMs, lane: held?.lane ?? lane });
     return true;
   }
 
@@ -104,6 +109,6 @@ export class InProcessLeases implements Leases {
     for (const [runId, held] of due) {
       this.runs.set(runId, { ...held, owner: null, claim_until: this.now() + ttlMs });
     }
-    return due.map(([run_id, held]) => ({ run_id, run_kind: held.run_kind }));
+    return due.map(([run_id, held]) => ({ run_id, run_kind: held.run_kind, lane: held.lane }));
   }
 }

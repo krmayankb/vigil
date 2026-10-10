@@ -47,6 +47,7 @@ AGENT_DDL = (
     "31_agent_ledger_hash_chain.sql",
     "20_agent_directives.sql",
     "21_agent_run_leases.sql",
+    "41_agent_run_leases_lane.sql",
 )
 
 

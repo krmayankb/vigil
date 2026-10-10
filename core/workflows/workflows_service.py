@@ -534,6 +534,9 @@ class WorkflowsService:
         # a root-cause run's is the handoff it traces back from, which is a join
         # key and reads as nonsense in the "started by" an operator is shown.
         actor: Optional[str] = None,
+        # human: a person started it and is waiting; automated: something in the
+        # platform did, and it waits its turn behind the work people asked for.
+        lane: str = "human",
     ) -> Dict[str, Any]:
         """Start a workflow as a compose run on the agent layer.
 
@@ -637,6 +640,7 @@ class WorkflowsService:
                 }
             ),
             enqueued_by=actor or triggered_by or "api",
+            lane=lane,
         )
         try:
             job_id = await enqueue_run(job)

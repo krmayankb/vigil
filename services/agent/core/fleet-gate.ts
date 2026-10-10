@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Redis } from "ioredis";
+import { laneNow } from "./lane.js";
 import { errorFields, logger } from "./log.js";
 
 const log = logger("agent.fleet-gate");
@@ -17,6 +18,9 @@ const log = logger("agent.fleet-gate");
 export interface FleetLimits {
   // 0 or absent means no limit of that kind.
   concurrency?: number;
+  // Slots of the concurrency automated runs may not take, kept for runs a person is
+  // waiting on. Human runs may use every slot.
+  humanReserve?: number;
   rpm?: number;
   tpm?: number;
 }
@@ -34,9 +38,10 @@ const ACQUIRE = `
 local inflight, rpm, tpm = KEYS[1], KEYS[2], KEYS[3]
 local now, hold, id = tonumber(ARGV[1]), tonumber(ARGV[2]), ARGV[3]
 local maxc, maxr, maxt, want = tonumber(ARGV[4]), tonumber(ARGV[5]), tonumber(ARGV[6]), tonumber(ARGV[7])
+local reserve = tonumber(ARGV[8])
 local nextMinute = 60000 - (now % 60000)
 redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now)
-if maxc > 0 and redis.call('ZCARD', inflight) >= maxc then return 50 end
+if maxc > 0 and redis.call('ZCARD', inflight) >= maxc - reserve then return 50 end
 if maxr > 0 and (tonumber(redis.call('GET', rpm) or '0') + 1) > maxr then return nextMinute end
 if maxt > 0 then
   if want > maxt then want = maxt end
@@ -103,6 +108,7 @@ export class RedisGate implements Gate {
             this.limits.rpm ?? 0,
             this.limits.tpm ?? 0,
             Math.max(1, Math.round(tokens)),
+            laneNow() === "human" ? 0 : Math.min(this.limits.humanReserve ?? 0, Math.max(0, (this.limits.concurrency ?? 0) - 1)),
           ),
         );
       } catch (error) {
@@ -133,6 +139,6 @@ export function fleetLimitsFrom(prefix: string, env: NodeJS.ProcessEnv = process
     const value = Number(env[`${prefix}_${name}`]);
     return Number.isInteger(value) && value > 0 ? value : 0;
   };
-  const limits = { concurrency: read("CONCURRENCY"), rpm: read("RPM"), tpm: read("TPM") };
+  const limits = { concurrency: read("CONCURRENCY"), rpm: read("RPM"), tpm: read("TPM"), humanReserve: read("HUMAN_RESERVE") };
   return limits.concurrency + limits.rpm + limits.tpm === 0 ? null : limits;
 }
