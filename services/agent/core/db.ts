@@ -10,14 +10,19 @@ import type { PoolConfig } from "pg";
 // drains the queue and serve answers the HTTP surface, and they are separate
 // Deployments since #635.
 export function poolConfig(): PoolConfig {
+  // pg's default is 10. Each replica holds its own pool, so the database sees
+  // replicas times this; sized here rather than per caller.
+  const max = Number(process.env["VIGIL_PG_POOL_MAX"]);
+  const sized = Number.isInteger(max) && max > 0 ? { max } : {};
   const url = process.env["DATABASE_URL"];
-  if (url !== undefined && url !== "") return { connectionString: url };
+  if (url !== undefined && url !== "") return { connectionString: url, ...sized };
 
   const host = process.env["POSTGRES_HOST"];
   if (host === undefined || host === "") {
     throw new Error("set DATABASE_URL, or POSTGRES_HOST and the other POSTGRES_* vars");
   }
   return {
+    ...sized,
     host,
     port: Number(process.env["POSTGRES_PORT"] ?? 5432),
     database: process.env["POSTGRES_DB"],

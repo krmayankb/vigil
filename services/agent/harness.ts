@@ -36,7 +36,13 @@ const client = new OpenAI({
   timeout: Number(process.env["VIGIL_LLM_TIMEOUT_MS"] ?? 600_000),
 });
 
-const limiter = new Limiter({ rpm: 500, tpm: 400_000 }, 4);
+// Per process: N replicas send up to N times these. Overridable so a deployment
+// can size them to its gateway, and a soak run can measure past them.
+const envInt = (name: string, fallback: number): number => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+};
+const limiter = new Limiter({ rpm: envInt("VIGIL_LLM_RPM", 500), tpm: envInt("VIGIL_LLM_TPM", 400_000) }, envInt("VIGIL_LLM_CONCURRENCY", 4));
 
 // Memoised across runs, since a per-run memo dies with the run, but only for as long
 // as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
