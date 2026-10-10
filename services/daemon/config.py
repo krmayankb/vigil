@@ -81,6 +81,7 @@ class OrchestratorConfig:
     enabled: bool = False
     loop_interval: int = 60
     max_concurrent_agents: int = 3
+    intake_high_water: int = 500
     max_iterations_per_agent: int = 50
     max_cost_per_investigation: float = 5.0
     max_total_hourly_cost: float = 20.0
@@ -184,6 +185,7 @@ class DaemonConfig:
         config.orchestrator.enabled = settings.orchestrator_enabled
         config.orchestrator.loop_interval = settings.orchestrator_loop_interval
         config.orchestrator.max_concurrent_agents = settings.orchestrator_max_agents
+        config.orchestrator.intake_high_water = settings.orchestrator_intake_high_water
         config.orchestrator.max_iterations_per_agent = (
             settings.orchestrator_max_iterations
         )

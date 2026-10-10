@@ -298,7 +298,12 @@ class Settings(BaseSettings):
     # Orchestrator
     orchestrator_enabled: bool = False
     orchestrator_loop_interval: int = 60
+    # Investigations running at once; 0 means no cap of the daemon's own, leaving
+    # the agent layer's worker slots, fleet gate and fleet budget to bound the load.
     orchestrator_max_agents: int = 3
+    # Automated runs already waiting on the run queue past which the daemon stops
+    # launching more: queueing work faster than workers drain it only ages it.
+    orchestrator_intake_high_water: int = 500
     orchestrator_max_iterations: int = 50
     orchestrator_max_cost: float = 5.0
     orchestrator_max_hourly_cost: float = 20.0

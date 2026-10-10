@@ -177,6 +177,17 @@ async def enqueue_run(
         raise
 
 
+async def automated_backlog() -> Optional[int]:
+    """Automated runs waiting to start, or None when the queue cannot be read."""
+    try:
+        counts = await _run_queue("automated").getJobCounts("waiting", "prioritized", "delayed")
+        return sum(int(value) for value in counts.values())
+    except Exception as exc:  # noqa: BLE001 -- unknown is answered by the caller
+        logger.warning("could not read the run queue's depth: %s", exc)
+        await close_run_queue()
+        return None
+
+
 def _default_job_id(job: Dict[str, Any]) -> str:
     if job.get("reason") == "start":
         return str(job["run_id"])

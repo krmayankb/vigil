@@ -80,7 +80,13 @@ except Exception:
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
-from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run, priority_for
+from core.agents.queue import (
+    RUN_KINDS,
+    automated_backlog,
+    build_start_job,
+    enqueue_run,
+    priority_for,
+)
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
@@ -647,10 +653,10 @@ class Orchestrator:
         )
         # Rows stay queued while the hour is at the cap; they launch once old
         # spend rolls out of the window.
-        if not self._hourly_budget_exhausted():
+        if not self._hourly_budget_exhausted() and await self._room_on_the_run_queue():
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if self._running() >= self.config.max_concurrent_agents:
+                if self._at_capacity():
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
@@ -1079,7 +1085,7 @@ class Orchestrator:
             )
             if not inv_id:
                 continue
-            if self._running() >= self.config.max_concurrent_agents:
+            if self._at_capacity():
                 return
 
             self._update_investigation_status(inv_id, "assigned")
@@ -1215,6 +1221,27 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
+
+    def _at_capacity(self) -> bool:
+        """Whether the daemon's own cap is reached; a cap of 0 or less is no cap."""
+        cap = self.config.max_concurrent_agents
+        return cap > 0 and self._running() >= cap
+
+    async def _room_on_the_run_queue(self) -> bool:
+        """Whether the automated run queue is short of its high-water mark.
+
+        Unknown reads as room: the queue is the agent layer's to bound, and a
+        daemon that stopped launching whenever Redis blinked would starve intake.
+        """
+        backlog = await automated_backlog()
+        if backlog is None or backlog < self.config.intake_high_water:
+            return True
+        logger.info(
+            "run queue holds %d automated runs (high water %d); not launching more",
+            backlog,
+            self.config.intake_high_water,
+        )
+        return False
 
     def _in_flight(self) -> int:
         try:
