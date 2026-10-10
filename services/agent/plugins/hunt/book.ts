@@ -103,8 +103,9 @@ export class HuntBook {
     });
   }
 
-  // A blind spot: a call the estate could not answer. Counted exactly like the
-  // controller's, so it gap-locks a hypothesis it bears on the same way.
+  // A blind spot: a call the estate could not answer. openGaps counts it once per
+  // tool, on the hypothesis it names or on every claim when it names none, so it
+  // gap-locks the way a failed dispatch did.
   appendGap(tool: string, kind: "timeout" | "unavailable", hypothesisId: string | null): void {
     this.appendEvidence([
       {
@@ -526,8 +527,21 @@ export class HuntBook {
     };
     this.ledger.patch("hunt", hunt.hunt_id, { budgets });
     this.pool?.raise(budgets);
-    if (hunt.status === "parked" && !(hunt.parked_reason ?? "").startsWith(AWAITING) && boundBy(this.hunt) === null) {
-      this.ledger.patch("hunt", hunt.hunt_id, { status: "active", parked_at: null, parked_reason: null });
+    const asked = {
+      iterations: hunt.budgets.max_iterations + grant.iterations,
+      cost_usd: Number((hunt.budgets.max_cost_usd + grant.cost_usd).toFixed(6)),
+      wall_ms: hunt.budgets.max_wall_ms + grant.wall_ms,
+    };
+    if (budgets.max_iterations < asked.iterations || budgets.max_cost_usd < asked.cost_usd || budgets.max_wall_ms < asked.wall_ms) {
+      journalNote(
+        this.ledger,
+        `${directive.actor}'s extension was clamped to the hard ceiling: ${budgets.max_iterations} turns, $${budgets.max_cost_usd.toFixed(2)}, ` +
+          `${Math.round(budgets.max_wall_ms / 60_000)} minutes.`,
+      );
+    }
+    if (hunt.status === "parked" && !(hunt.parked_reason ?? "").startsWith(AWAITING)) {
+      if (boundBy(this.hunt) === null) this.ledger.patch("hunt", hunt.hunt_id, { status: "active", parked_at: null, parked_reason: null });
+      else journalNote(this.ledger, `${directive.actor}'s extension leaves no room to run -- ${boundReason(this.hunt)} -- so the hunt stays parked.`);
     }
   }
 
