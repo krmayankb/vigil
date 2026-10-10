@@ -9,10 +9,12 @@ import {
   type RunKind,
   type RunPayload,
   type CallPayload,
+  type ChildPayload,
   type TerminalPayload,
   type UnboundPayload,
 } from "../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../contracts/memory.js";
+import { replayFrames, type FrameReplay } from "./replay.js";
 
 // What a reader outside this process is told about a kernel run, and what each
 // turn of it was shown. One fold for every plugin: the events are the kernel's
@@ -130,6 +132,11 @@ export interface AgentReplay {
   turns: AgentReplayTurn[];
   conclusion: ConclusionPayload | null;
   review: ReviewPayload | null;
+  // Every model call's input rebuilt from the ledger and diffed against the hash it
+  // was sent with. Empty on a ledger written before calls were framed.
+  frames: FrameReplay;
+  // Judges and subagents, each on a ledger of its own.
+  children: ChildPayload[];
 }
 
 // What each turn was shown is the transcript up to it, and the transcript is the
@@ -158,5 +165,13 @@ export function agentReplay(runId: string, events: readonly Envelope[]): AgentRe
     pending = 0;
     current.calls.push(step);
   }
-  return { run_id: runId, recall: recalledPayloadOf(events as never), turns, conclusion, review };
+  return {
+    run_id: runId,
+    recall: recalledPayloadOf(events as never),
+    turns,
+    conclusion,
+    review,
+    frames: replayFrames(events),
+    children: events.filter((event) => event.kind === "child").map((event) => event.payload as ChildPayload),
+  };
 }

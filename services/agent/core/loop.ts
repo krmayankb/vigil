@@ -55,6 +55,10 @@ export interface TurnConfig {
   // `${prefix}${offset + n}`. Absent leaves results unnumbered, as every workflow
   // written before the kernel expects.
   refs?: { prefix: string; offset: number };
+  // Where this turn's spend is journaled, when not on its own ledger: a child run's
+  // model calls are its parent's spend, so the parent's budget and every fold of
+  // its cost count them, and the child's ledger holds what it was shown and said.
+  spend_to?: { run_id: string; run_kind: RunKind };
   // Lets this turn run against a ledger that already holds a terminal. Only for a turn
   // that describes a run rather than continues one -- never one that can reach a tool.
   after_terminal?: boolean;
