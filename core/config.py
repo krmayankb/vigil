@@ -304,6 +304,9 @@ class Settings(BaseSettings):
     # Automated runs already waiting on the run queue past which the daemon stops
     # launching more: queueing work faster than workers drain it only ages it.
     orchestrator_intake_high_water: int = 500
+    # One daemon leads at a time; a second replica waits on standby. Off only for a
+    # single dev box that has no Postgres lock to take.
+    vigil_daemon_leader: bool = True
     orchestrator_max_iterations: int = 50
     orchestrator_max_cost: float = 5.0
     orchestrator_max_hourly_cost: float = 20.0

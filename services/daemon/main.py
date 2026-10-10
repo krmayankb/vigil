@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
 from pathlib import Path
@@ -251,8 +250,10 @@ class SOCDaemon:
 
 
 def _leadership():
-    """One daemon leads; on by default, VIGIL_DAEMON_LEADER=off for a single dev box."""
-    if os.environ.get("VIGIL_DAEMON_LEADER", "on").strip().lower() == "off":
+    """One daemon leads; on by default, VIGIL_DAEMON_LEADER=false for a single dev box."""
+    from core.config import get_settings
+
+    if not get_settings().vigil_daemon_leader:
         return None
     from core.storage.connection import get_db_manager
     from services.daemon.leader import Leadership
