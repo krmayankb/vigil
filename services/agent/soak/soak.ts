@@ -120,8 +120,11 @@ function startWorkers(stubPort: number, logDir: string): ChildProcess[] {
   const stub = `http://127.0.0.1:${stubPort}`;
   return Array.from({ length: WORKERS }, (_, index) => {
     const log = createWriteStream(join(logDir, `worker-${index}.log`));
-    const child = spawn("npx", ["tsx", "worker.ts"], {
+    // tsx directly, in a process group of its own: npx does not pass a signal on, so
+    // killing it left the worker running, and a soak with runs still held never ended.
+    const child = spawn(join(AGENT, "node_modules", ".bin", "tsx"), ["worker.ts"], {
       cwd: AGENT,
+      detached: true,
       env: {
         ...process.env,
         DATABASE_URL: DATABASE,
@@ -223,7 +226,14 @@ async function main(): Promise<void> {
 
   const stub = await startStub(stubOptions);
   const workers = startWorkers(stub.port, join(OUT, LABEL));
-  const stopAll = () => workers.forEach((child) => child.kill("SIGTERM"));
+  const stopAll = () =>
+    workers.forEach((child) => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    });
   process.on("SIGINT", () => {
     stopAll();
     process.exit(130);

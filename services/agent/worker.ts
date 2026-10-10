@@ -1,4 +1,4 @@
-import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
+import { DelayedError, Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
@@ -8,7 +8,8 @@ import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
-import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import { fleetBudget, harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import type { FleetBudget } from "./core/fleet-budget.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
 import { GatewayExhausted, ProviderUnavailable } from "./core/limiter.js";
@@ -672,7 +673,7 @@ export interface Running {
 // one pool, two ways in.
 // The factory is a parameter so a test can stand the model in and leave the
 // queue, the ledger and the leases real, which is what the seam is made of.
-export function startWorker(build: HarnessFactory = harnessFor): Running {
+export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBudget = fleetBudget): Running {
   const pool = new pg.Pool(poolConfig());
   const ledger = new LedgerRepository(pool);
   const leases = new LeaseRepository(pool);
@@ -693,7 +694,26 @@ export function startWorker(build: HarnessFactory = harnessFor): Running {
   const consume = (lane: Lane, queue: string, concurrency: number): Worker<RunJob> => {
     const consumer = new Worker<RunJob>(
       queue,
-      (job) => inLane(lane, () => handle(cached, leases, { ...job.data, lane }, directives, build)).finally(() => cached.forget(job.data.run_id)),
+      async (job, token) => {
+        const data: RunJob = { ...job.data, lane };
+        // An automated start waits while the fleet's budget is spoken for. A person's
+        // run is never held here, and a resume is work already under way.
+        if (lane === "automated" && data.reason === "start") {
+          const admission = await budget.admit(data.run_id, data.run_kind);
+          if (!admission.admitted) {
+            const delay = Math.round(Math.min(admission.retryInMs, 60_000) * (0.75 + Math.random() * 0.5));
+            log.info("run held for the fleet budget", { run_id: data.run_id, reason: admission.reason, retry_in_ms: delay });
+            await job.moveToDelayed(Date.now() + delay, token);
+            throw new DelayedError();
+          }
+        }
+        try {
+          await inLane(lane, () => handle(cached, leases, data, directives, build), data.run_id);
+          if ((await cached.terminal(data.run_id)) !== null) await budget.settle(data.run_id, data.run_kind);
+        } finally {
+          cached.forget(data.run_id);
+        }
+      },
       { connection, concurrency, lockDuration: LEASE_TTL_MS * 10 },
     );
     consumer.on("failed", logFailure);

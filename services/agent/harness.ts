@@ -5,6 +5,9 @@ import { budgetOf, FRESH, unmeteredQuota, type Seed } from "./core/budget.js";
 import { httpPrices } from "./core/prices.js";
 import { Limiter } from "./core/limiter.js";
 import { fleetLimitsFrom, openGate, RedisGate, type Gate } from "./core/fleet-gate.js";
+import { fleetBudgetLimitsFrom, RedisFleetBudget, unboundedBudget, type FleetBudget } from "./core/fleet-budget.js";
+import { runNow } from "./core/lane.js";
+import type { Budget } from "./contracts/budget.js";
 import type { RegisteredTool } from "./contracts/tool.js";
 import { sharedRedis } from "./core/db.js";
 import type { Harness } from "./core/loop.js";
@@ -78,6 +81,34 @@ function toolGate(spec: RunSpec): (tool: RegisteredTool) => Gate {
   };
 }
 
+// What the whole fleet may spend per hour and per day (VIGIL_FLEET_BUDGET_HOURLY_USD,
+// _DAILY_USD). The worker admits automated starts against it and settles each run
+// when it ends; every priced call is charged to it here, to the run in whose context
+// the call was made -- a child run's to its parent, as its spend already is.
+const fleetLimits = fleetBudgetLimitsFrom();
+export const fleetBudget: FleetBudget = fleetLimits === null ? unboundedBudget : new RedisFleetBudget(sharedRedis(), fleetLimits);
+
+function charged(inner: Budget): Budget {
+  if (fleetBudget === unboundedBudget) return inner;
+  return {
+    get limits() {
+      return inner.limits;
+    },
+    get spent() {
+      return inner.spent;
+    },
+    beginCall: () => inner.beginCall(),
+    raise: (limits) => inner.raise(limits),
+    release: () => inner.release(),
+    priceOf: (modelId, providerType, tokens) => inner.priceOf(modelId, providerType, tokens),
+    record: (payload) => {
+      inner.record(payload);
+      const run = runNow();
+      if (run !== undefined && payload.cost_usd !== null) void fleetBudget.charge(run, payload.cost_usd);
+    },
+  };
+}
+
 // Memoised across runs, since a per-run memo dies with the run, but only for as long
 // as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
 // core/config.py reads, and its default there.
@@ -121,7 +152,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // deployment's tools itself and grants them by the plugin's needs.
     registry: registryOf(toolsFrom(spec.tools), {}),
     dispatch: remoteDispatch({ url: tools, token: internalToken(), gate: toolGate(spec), ...(principal === undefined ? {} : { principal }) }),
-    budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),
+    budget: charged(budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices)),
     // Wrapped rather than replaced: whatever the caller passed still answers the
     // cue-shaped recall, and the keyed read is added over the same endpoint the
     // tools go to -- one address for the far side, not two to keep in step.
