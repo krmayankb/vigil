@@ -81,6 +81,7 @@ except Exception:
     ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
 from core.triage.classify import DEFAULT_CLASSIFIER, HUMAN_ASK, SCHEDULED, Classification
+from core.triage.budgets import budget_for
 from core.triage.decision import decision_record
 from core.triage.routes import route as route_activity
 from core.agents.queue import (
@@ -1398,6 +1399,7 @@ class Orchestrator:
             # The workflow resolves both layers, so no config path travels beside it.
             "playbook": f"workflow:{inv_record['workflow_id']}",
             "plugin": self._plugin_of(inv_record["workflow_id"]),
+            "budget": budget_for(inv_record["workflow_id"]),
             "config": "",
             "arch": "",
             "prompt": self.workdir.read_file(inv_id, "context.md") or "",

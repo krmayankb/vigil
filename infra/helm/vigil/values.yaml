@@ -772,6 +772,9 @@ config:
   VIGIL_FLEET_BUDGET_HOURLY_USD: "0"
   VIGIL_FLEET_BUDGET_DAILY_USD: "0"
   VIGIL_FLEET_EXPECTED_RUN_USD: "0.05"
+  # "on" holds workflows to their own caps (SystemConfig workflows.budgets) even
+  # with no fleet cap set.
+  VIGIL_FLEET_BUDGET_SCOPES: "off"
   VIGIL_LLM_FLEET_CONCURRENCY: "0"
   VIGIL_LLM_FLEET_RPM: "0"
   VIGIL_LLM_FLEET_TPM: "0"

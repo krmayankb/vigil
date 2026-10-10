@@ -714,7 +714,9 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
         // An automated start waits while the fleet's budget is spoken for. A person's
         // run is never held here, and a resume is work already under way.
         if (lane === "automated" && data.reason === "start") {
-          const admission = await budget.admit(data.run_id, data.run_kind);
+          const asked = data.request.budget ?? null;
+          const scope = asked === null ? null : { scope: asked.scope, hourly: asked.hourly_usd ?? null, daily: asked.daily_usd ?? null };
+          const admission = await budget.admit(data.run_id, data.run_kind, scope);
           if (!admission.admitted) {
             const delay = Math.round(Math.min(admission.retryInMs, 60_000) * (0.75 + Math.random() * 0.5));
             log.info("run held for the fleet budget", { run_id: data.run_id, reason: admission.reason, retry_in_ms: delay });

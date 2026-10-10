@@ -59,6 +59,7 @@ OTHER_CONSUMERS = {
     # The fleet's limits, read by the agent worker (docs/agent-fleet.md). Several are
     # composed from a prefix in core/fleet-gate.ts, so no literal names them.
     "VIGIL_FLEET_EXPECTED_RUN_USD": "agent core/fleet-budget.ts",
+    "VIGIL_FLEET_BUDGET_SCOPES": "agent core/fleet-budget.ts",
     "VIGIL_HUMAN_RUN_CONCURRENCY": "agent worker.ts",
     "VIGIL_LLM_FLEET_CONCURRENCY": "agent core/fleet-gate.ts via harness.ts",
     "VIGIL_LLM_FLEET_HUMAN_RESERVE": "agent core/fleet-gate.ts via harness.ts",

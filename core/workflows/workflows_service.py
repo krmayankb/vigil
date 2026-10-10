@@ -556,6 +556,7 @@ class WorkflowsService:
         agent layer mirrors as each phase completes.
         """
         from core.agents.queue import build_start_job, enqueue_run
+        from core.triage.budgets import budget_for
 
         workflow = self.get_workflow(workflow_id)
         if not workflow:
@@ -635,6 +636,7 @@ class WorkflowsService:
                     "arch": "",
                     "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
                     "plugin": workflow.plugin,
+                    "budget": budget_for(workflow.id),
                     "config": "",
                     "prompt": self._build_target_context(parameters),
                     # On the job, not in the playbook: the reference names a definition
