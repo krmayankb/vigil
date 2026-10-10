@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { CallPayload, ChildPayload, ConclusionPayload, RunPayload } from "../../contracts/events.js";
 import { recordOf } from "../../core/record.js";
 import { replayFrames, trajectoryOf } from "../../core/replay.js";
-import { fold, type HuntEvent } from "../../workflows/hunt/ledger.js";
+import { fold, type HuntEvent } from "../../plugins/hunt/ledger.js";
 
 // The kernel replay gate. Its fixture is a hunt run on the kernel and recorded by
 // scripts/record-kernel-replay.ts, with every ledger it wrote: the hunt's own and

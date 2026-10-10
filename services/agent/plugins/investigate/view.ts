@@ -1,9 +1,9 @@
 import { agentProjection, agentReplay, modelMs, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
 import type { CallPayload } from "../../contracts/events.js";
 import { classOf } from "../../core/record.js";
-import { callViews } from "../../workflows/call-view.js";
-import type { LeadProjection } from "../../workflows/lead/projection.js";
-import type { InvestigateReplay } from "../../workflows/lead/replay.js";
+import { callViews } from "../../core/call-view.js";
+import type { LeadProjection } from "./legacy/projection.js";
+import type { InvestigateReplay } from "./legacy/replay.js";
 
 // The console reads an investigate run in the lead workflow's shape. A kernel run
 // answers in that same shape, so nothing that renders investigations has to know

@@ -1,15 +1,15 @@
 import { agentProjection, agentReplay, modelMs, type AgentProjection, type AgentReplay } from "../../core/agent-view.js";
 import { RECORD_TOOLS } from "../../core/record.js";
-import { callViews } from "../../workflows/call-view.js";
+import { callViews } from "../../core/call-view.js";
 import { HUNT_TOOLS, operatorOf } from "./hooks.js";
 import { recalledNotesOf } from "../../contracts/memory.js";
 import { replayFrames } from "../../core/replay.js";
-import { fold } from "../../workflows/hunt/ledger.js";
-import type { ReplayReport, ReplayedDecision } from "../../workflows/hunt/replay.js";
-import type { Digest } from "../../workflows/hunt/types.js";
+import { fold } from "./ledger.js";
+import type { ReplayReport, ReplayedDecision } from "./replay.js";
+import type { Digest } from "./types.js";
 import type { CallPayload } from "../../contracts/events.js";
-import type { HuntEvent } from "../../workflows/hunt/ledger.js";
-import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView } from "../../workflows/hunt/projection.js";
+import type { HuntEvent } from "./ledger.js";
+import { huntProjection, MOVES_SHOWN, type HuntProjection, type MoveView } from "./projection.js";
 
 // The console reads a hunt in the controller's shape. A kernel hunt writes the same
 // record, so the projection folds it unchanged; what it lacks is the controller's

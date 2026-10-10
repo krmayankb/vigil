@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { pendingCheckpoints, resolutionOf, resolveCheckpoint } from "../../workflows/hunt/checkpoints.js";
-import { steer } from "../../workflows/hunt/inbox.js";
-import { Journal } from "../../workflows/hunt/journal.js";
+import { pendingCheckpoints, resolutionOf, resolveCheckpoint } from "../../plugins/hunt/checkpoints.js";
+import { steer } from "../../plugins/hunt/inbox.js";
+import { Journal } from "../../plugins/hunt/journal.js";
 import { bookOf, newLedger } from "../support/hunt.js";
 
 // The lead that folded the durable ledger and parked on an open checkpoint is gone.
