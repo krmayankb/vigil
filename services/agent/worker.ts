@@ -16,6 +16,7 @@ import { GatewayExhausted, ProviderUnavailable } from "./core/limiter.js";
 import { errorFields, logger } from "./core/log.js";
 import { jobIdFor, laneOf, RUN_QUEUE, RUN_QUEUE_HUMAN, JOB_SCHEMA_VERSION, type Lane, type RunJob } from "./contracts/job.js";
 import { inLane } from "./core/lane.js";
+import { fleetStatus } from "./core/fleet-status.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
 import {
@@ -745,8 +746,30 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
     });
   }, SWEEP_EVERY_MS);
 
+  // Said out loud once a minute, so a log alert can page someone: runs that failed
+  // for good since the last look, and runs nobody has picked up in five minutes.
+  let failedBefore: number | null = null;
+  const watching = setInterval(() => {
+    void (async () => {
+      const status = await fleetStatus({ pool, queues: { automated: producer, human: humanProducer } });
+      const queues = status["queues"] as Record<string, Record<string, number>> | { unavailable: string };
+      if (!("unavailable" in queues)) {
+        const failed = Object.values(queues).reduce((total, counts) => total + (counts["failed"] ?? 0), 0);
+        if (failedBefore !== null && failed > failedBefore) {
+          log.error("runs failed for good", { new: failed - failedBefore, total: failed, latest: status["dead_letters"] });
+        }
+        failedBefore = failed;
+      }
+      const leases = status["leases"] as { stalled?: unknown[] } | undefined;
+      if (Array.isArray(leases?.stalled) && leases.stalled.length > 0) {
+        log.warn("runs stalled with no watchdog picking them up", { count: leases.stalled.length, runs: leases.stalled });
+      }
+    })().catch((error: unknown) => log.warn("fleet watch failed", errorFields(error)));
+  }, 60_000);
+
   return { worker, human, ledger, leases, close: async () => {
     clearInterval(sweeping);
+    clearInterval(watching);
     await Promise.all([worker.close(), human.close()]);
     await Promise.all([producer.close(), humanProducer.close()]);
     await pool.end();
