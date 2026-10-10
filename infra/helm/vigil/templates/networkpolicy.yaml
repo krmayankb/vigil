@@ -175,6 +175,16 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.agentServe.service.port }}
+    {{- if and .Values.agentWorker.enabled .Values.agentWorker.autoscaling.keda.enabled }}
+    {{- /* KEDA's operator reads /fleet/backlog to scale the workers. */}}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicies.agentServe.kedaNamespaceSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.agentServe.service.port }}
+    {{- end }}
     {{- if .Values.networkPolicies.agentServe.allowProbesFromAnyNamespace }}
     {{- /* Health rides the traffic port, and ingress rules are OR'd -- so this
            rule does not merely add probes, it opens the port to every pod in the

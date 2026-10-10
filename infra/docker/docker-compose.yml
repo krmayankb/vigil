@@ -36,6 +36,19 @@ x-agent-env: &agent-env
   - SSL_CERT_FILE
   - REQUESTS_CA_BUNDLE
   - NODE_EXTRA_CA_CERTS
+  # The fleet's limits (docs/agent-fleet.md). 0 is none: each worker keeps only its
+  # own limits. The two budget caps belong on soc-daemon too.
+  - VIGIL_RUN_CONCURRENCY=${VIGIL_RUN_CONCURRENCY:-4}
+  - VIGIL_HUMAN_RUN_CONCURRENCY=${VIGIL_HUMAN_RUN_CONCURRENCY:-1}
+  - VIGIL_LLM_FLEET_CONCURRENCY=${VIGIL_LLM_FLEET_CONCURRENCY:-0}
+  - VIGIL_LLM_FLEET_RPM=${VIGIL_LLM_FLEET_RPM:-0}
+  - VIGIL_LLM_FLEET_TPM=${VIGIL_LLM_FLEET_TPM:-0}
+  - VIGIL_LLM_FLEET_HUMAN_RESERVE=${VIGIL_LLM_FLEET_HUMAN_RESERVE:-0}
+  - VIGIL_TOOL_FLEET_CONCURRENCY=${VIGIL_TOOL_FLEET_CONCURRENCY:-0}
+  - VIGIL_FLEET_BUDGET_HOURLY_USD=${VIGIL_FLEET_BUDGET_HOURLY_USD:-0}
+  - VIGIL_FLEET_BUDGET_DAILY_USD=${VIGIL_FLEET_BUDGET_DAILY_USD:-0}
+  - VIGIL_FLEET_EXPECTED_RUN_USD=${VIGIL_FLEET_EXPECTED_RUN_USD:-0.05}
+  - VIGIL_PROVIDER_RETRY_MS=${VIGIL_PROVIDER_RETRY_MS:-60000}
 
 # Intent knobs (INTENT_FIELDS). The Settings card runs in the API process and
 # the daemon runs in soc-daemon; one list so both see the same values.
@@ -336,6 +349,12 @@ services:
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       # Redis (LLM queue)
       REDIS_URL: redis://redis:6379/0
+      # Launching from the triage queue, and the fleet budget the agent workers
+      # hold: once a cap is set, the daemon's own hourly cap stands down.
+      ORCHESTRATOR_INTAKE_HIGH_WATER: ${ORCHESTRATOR_INTAKE_HIGH_WATER:-500}
+      VIGIL_DAEMON_LEADER: ${VIGIL_DAEMON_LEADER:-true}
+      VIGIL_FLEET_BUDGET_HOURLY_USD: ${VIGIL_FLEET_BUDGET_HOURLY_USD:-0}
+      VIGIL_FLEET_BUDGET_DAILY_USD: ${VIGIL_FLEET_BUDGET_DAILY_USD:-0}
       # Same seam as backend. localhost:6989 is the host-run default; without
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}

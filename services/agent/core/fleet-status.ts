@@ -47,6 +47,18 @@ async function settle<T>(work: Promise<T>): Promise<T | { unavailable: string }>
   }
 }
 
+// Runs waiting to start across both lanes, for an autoscaler: waiting and
+// prioritized, and not delayed -- a run held for the budget or for a provider is
+// not work more workers could take. One number, because KEDA reads one.
+export async function backlog(queues: FleetStatusSources["queues"]): Promise<number> {
+  let total = 0;
+  for (const queue of Object.values(queues)) {
+    const counts = await queue.getJobCounts("waiting", "prioritized");
+    total += (counts["waiting"] ?? 0) + (counts["prioritized"] ?? 0);
+  }
+  return total;
+}
+
 async function queueDepths(queues: FleetStatusSources["queues"]): Promise<Record<string, Record<string, number>>> {
   const out: Record<string, Record<string, number>> = {};
   for (const [lane, queue] of Object.entries(queues)) {

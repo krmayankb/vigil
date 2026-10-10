@@ -1620,7 +1620,11 @@ class Orchestrator:
         """Gate intake on the rolling hour; logs once per pause/resume transition.
 
         Not a write to _enabled: _sync_enabled_from_db would undo it within 5s.
+        Stands down when the fleet budget is set: the agent workers then admit each
+        run against spend plus what running work has reserved, which this cannot see.
         """
+        if self._fleet_budget_governs():
+            return False
         spent = self._hourly_cost()
         limit = self._hourly_cost_limit()
         paused = self._hourly_pause_decision(spent, limit)
@@ -1637,6 +1641,18 @@ class Orchestrator:
                     f"Hourly cost ${spent:.4f} below limit ${limit:.4f}, resuming intake"
                 )
         return paused
+
+    def _fleet_budget_governs(self) -> bool:
+        settings = get_settings()
+        governs = (settings.vigil_fleet_budget_hourly_usd or 0) > 0 or (
+            settings.vigil_fleet_budget_daily_usd or 0
+        ) > 0
+        if governs and not getattr(self, "_fleet_budget_announced", False):
+            self._fleet_budget_announced = True
+            logger.info(
+                "the fleet budget governs spend; the daemon's hourly cap stands down"
+            )
+        return governs
 
     def _hourly_pause_decision(self, spent: Optional[float], limit: float) -> bool:
         # Unknown spend reads as over the cap, including on a cold start.

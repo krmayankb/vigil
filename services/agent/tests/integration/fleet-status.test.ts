@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 import type { RunJob } from "../../contracts/job.js";
-import { fleetStatus } from "../../core/fleet-status.js";
+import { backlog, fleetStatus } from "../../core/fleet-status.js";
 import { LeaseRepository } from "../../ledger/leases.js";
 import { TEST_DSN } from "../support/testdb.js";
 
@@ -65,5 +65,22 @@ describe("what the fleet is doing, for the console and whoever is on call", () =
     expect(status.queues.unavailable).toBeTruthy();
     expect(status.leases).toHaveProperty("by_state");
     await down.close().catch(() => undefined);
+  });
+});
+
+describe("the backlog an autoscaler reads", () => {
+  it("counts runs waiting on either lane, prioritized ones included, and not ones held back", async () => {
+    const lanes = { automated: new Queue<RunJob>(`test-fleet-${randomUUID()}`, { connection }), human: new Queue<RunJob>(`test-fleet-${randomUUID()}`, { connection }) };
+    try {
+      await lanes.automated.add("run", job(randomUUID()), { priority: 1 });
+      await lanes.automated.add("run", job(randomUUID()), { priority: 4 });
+      await lanes.automated.add("run", job(randomUUID()));
+      await lanes.automated.add("run", job(randomUUID()), { delay: 60_000 });
+      await lanes.human.add("run", job(randomUUID()));
+      expect(await backlog(lanes)).toBe(4);
+    } finally {
+      await Promise.all([lanes.automated.obliterate({ force: true }), lanes.human.obliterate({ force: true })]);
+      await Promise.all([lanes.automated.close(), lanes.human.close()]);
+    }
   });
 });

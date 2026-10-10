@@ -71,6 +71,20 @@ reservations and caps, and model calls in flight against the fleet cap. Each wor
 also logs an error once a minute when more runs have failed for good, and a warning
 when runs have stalled.
 
+`GET /fleet/backlog` answers one number: runs waiting to start on both lanes,
+prioritised ones included and held ones not. With `agentWorker.autoscaling.keda`
+enabled, the chart scales the workers on it through KEDA's `metrics-api` trigger,
+using the same bearer token, and the agent-serve network policy admits KEDA's
+namespace (`networkPolicies.agentServe.kedaNamespaceSelector`). A Redis list count
+would miss prioritised runs, which BullMQ keeps in a sorted set.
+
+## Deploying
+
+Every setting above is in the chart's `config` (`infra/helm/vigil/values.yaml`) and
+in `infra/docker/docker-compose.yml`, at values that change nothing. Set the two
+budget caps on the workers and the daemon alike: the daemon reads them to stand its
+own hourly cap down.
+
 ## Database
 
 `infra/database/init/41_agent_run_leases_lane.sql` adds the lane to the lease row.

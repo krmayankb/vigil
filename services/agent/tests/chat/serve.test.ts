@@ -8,7 +8,7 @@ import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
 import type { HarnessFactory } from "../../harness.js";
-import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest, type VerifyRun } from "../../serve.js";
+import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest, type FleetReader, type VerifyRun } from "../../serve.js";
 import type { ReplayReport } from "../../plugins/hunt/replay.js";
 import { pluginFor } from "../../plugins/registry.js";
 import { newLedger, resolve } from "../support/hunt.js";
@@ -47,11 +47,11 @@ let state: InProcessState;
 let base: string;
 let stop: () => void;
 
-async function listen(script: readonly ScriptedTurn[], verify?: VerifyRun): Promise<void> {
+async function listen(script: readonly ScriptedTurn[], verify?: VerifyRun, fleet?: FleetReader): Promise<void> {
   state = new InProcessState();
   // Ready by construction: the ledger here is in-process, so there is no Postgres
   // for readiness to be reporting on.
-  const server = chatServer(state, async () => true, scriptedHarness(script), verify);
+  const server = chatServer(state, async () => true, scriptedHarness(script), verify, fleet);
   await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   stop = () => server.close();
@@ -389,5 +389,27 @@ describe("what a parent run carries into the conversation", () => {
   it("recalls nothing from a parent that has no ledger, rather than refusing the turn", async () => {
     const empty = new InProcessState();
     expect(await (await memoryFor(empty, "5a2c2d3e-0000-4000-8000-00000000dead")).recall("", 8)).toEqual([]);
+  });
+});
+
+describe("the fleet, for the console and for an autoscaler", () => {
+  const fleet: FleetReader = { status: async () => ({ queues: { automated: { waiting: 3 } } }), backlog: async () => 7 };
+
+  it("answers /fleet with the fleet's state and /fleet/backlog with one number", async () => {
+    await listen([], undefined, fleet);
+    const status = await get("/fleet");
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({ queues: { automated: { waiting: 3 } } });
+    expect(await (await get("/fleet/backlog")).json()).toEqual({ backlog: 7 });
+  });
+
+  it("asks for the token, as every other route does", async () => {
+    await listen([], undefined, fleet);
+    expect((await get("/fleet/backlog", "")).status).toBe(401);
+  });
+
+  it("says so in a process that was not given the queues", async () => {
+    await listen([]);
+    expect((await get("/fleet")).status).toBe(404);
   });
 });

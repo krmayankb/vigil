@@ -56,6 +56,17 @@ OTHER_CONSUMERS = {
     "VSTRIKE_BASE_URL": "vstrike MCP server",
     # TypeScript agent processes (services/agent).
     "VIGIL_PLAYBOOKS_URL": "agent layer",
+    # The fleet's limits, read by the agent worker (docs/agent-fleet.md). Several are
+    # composed from a prefix in core/fleet-gate.ts, so no literal names them.
+    "VIGIL_FLEET_EXPECTED_RUN_USD": "agent core/fleet-budget.ts",
+    "VIGIL_HUMAN_RUN_CONCURRENCY": "agent worker.ts",
+    "VIGIL_LLM_FLEET_CONCURRENCY": "agent core/fleet-gate.ts via harness.ts",
+    "VIGIL_LLM_FLEET_HUMAN_RESERVE": "agent core/fleet-gate.ts via harness.ts",
+    "VIGIL_LLM_FLEET_RPM": "agent core/fleet-gate.ts via harness.ts",
+    "VIGIL_LLM_FLEET_TPM": "agent core/fleet-gate.ts via harness.ts",
+    "VIGIL_PROVIDER_RETRY_MS": "agent worker.ts",
+    "VIGIL_RUN_CONCURRENCY": "agent worker.ts",
+    "VIGIL_TOOL_FLEET_CONCURRENCY": "agent harness.ts",
     "VIGIL_PRICING_URL": "agent layer",
     "VIGIL_RUNS_URL": "agent layer",
     "VIGIL_TOOLS_URL": "agent layer",

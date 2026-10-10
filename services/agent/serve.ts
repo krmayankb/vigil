@@ -27,7 +27,7 @@ import { huntKernelReplay } from "./plugins/hunt/view.js";
 import { rootCauseReplay } from "./plugins/rootcause/replay.js";
 import { Queue } from "bullmq";
 import { RUN_QUEUE, RUN_QUEUE_HUMAN, type RunJob } from "./contracts/job.js";
-import { fleetStatus } from "./core/fleet-status.js";
+import { backlog, fleetStatus } from "./core/fleet-status.js";
 
 const log = logger("agent.serve");
 
@@ -298,8 +298,12 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
 
 export type VerifyRun = (runId: string) => Promise<VerifyResult>;
 
-// The fleet's state for /fleet; absent in a process that was not given the queues.
-export type FleetReader = () => Promise<unknown>;
+// The fleet's state for /fleet, and the runs waiting to start for /fleet/backlog;
+// absent in a process that was not given the queues.
+export interface FleetReader {
+  status: () => Promise<unknown>;
+  backlog: () => Promise<number>;
+}
 
 export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun, fleet?: FleetReader): Server {
   return createServer((req, res) => {
@@ -315,10 +319,11 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
 
-      if (req.method === "GET" && url === "/fleet") {
+      if (req.method === "GET" && (url === "/fleet" || url === "/fleet/backlog")) {
         if (fleet === undefined) return refuse(res, 404, "this process does not read the fleet");
+        const body = url === "/fleet" ? await fleet.status() : { backlog: await fleet.backlog() };
         res.writeHead(200, { "content-type": "application/json" });
-        return void res.end(JSON.stringify(await fleet()));
+        return void res.end(JSON.stringify(body));
       }
 
       const run = req.method === "GET" ? PROJECTION.exec(url) : null;
@@ -388,7 +393,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
     cachedReady(serveReady(pool)),
     harnessFor,
     (runId) => verifyLedger(pool, runId),
-    () => fleetStatus({ pool, queues, redis: sharedRedis() }),
+    { status: () => fleetStatus({ pool, queues, redis: sharedRedis() }), backlog: () => backlog(queues) },
   ).listen(chatPort());
   const stop = () => {
     serving.close();
