@@ -16,6 +16,17 @@ import type { LeadKinds } from "./investigate/legacy/vocabulary.js";
 import { rootCauseProjection } from "./rootcause/projection.js";
 import type { RootCauseKinds } from "./rootcause/proof.js";
 
+// The plugin each run kind runs on. core/triage/routes.py RUN_KIND_PLUGINS says the
+// same; a ratchet holds the two equal.
+export const KIND_PLUGINS: Readonly<Record<Exclude<RunKind, "tally" | "subagent">, string>> = {
+  hunt: "hunt",
+  adjudicate: "adjudicate",
+  investigate: "investigate",
+  root_cause: "rootcause",
+  compose: "compose",
+  chat: "chat",
+};
+
 // Which loop drives a kind, and what its workflow may act on. Named here rather
 // than switched on in the worker: an agent type is a file and an entry, not a branch.
 export type WorkflowId = "lead" | "compose" | "hunt" | "rootcause";
@@ -65,14 +76,14 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // that is the only kind episodic memory accepts for a run. Sharing it would
   // file an adjudication under a kind it is not.
   hunt: {
-    arch: packaged("hunt"),
+    arch: packaged(KIND_PLUGINS.hunt),
     ...HUNT_LOOP,
     distil: (runId, events) => huntDistil(runId, events as readonly AgentEvent<HuntKinds>[]),
   },
   // One investigator, prose, no hunt vocabulary. checkpoints is owned so a
   // definition that sets hypothesis_approval: ask still parses and can park.
   root_cause: {
-    arch: packaged("rootcause"),
+    arch: packaged(KIND_PLUGINS.root_cause),
     workflow: "rootcause",
     actions: [],
     halts: [],
@@ -83,9 +94,9 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // intake admitted and the workflow intake chose, tests the stated intent against
   // the seeded benign account, and proposes a workflow without starting one. Same
   // HUNT_LOOP, no distil for the reason given above.
-  adjudicate: { arch: packaged("adjudicate"), ...HUNT_LOOP },
+  adjudicate: { arch: packaged(KIND_PLUGINS.adjudicate), ...HUNT_LOOP },
   investigate: {
-    arch: packaged("investigate"),
+    arch: packaged(KIND_PLUGINS.investigate),
     workflow: "lead",
     actions: ["EXAMINE", "CONCLUDE"],
     halts: ["CONCLUDE"],
@@ -97,7 +108,7 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // No actions: nothing emits one. A step ends when its agent answers, and the run
   // ends when the list does, so there is no verb for a model to choose or to halt on.
   compose: {
-    arch: packaged("compose"),
+    arch: packaged(KIND_PLUGINS.compose),
     workflow: "compose",
     actions: [],
     halts: [],
@@ -105,7 +116,7 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   },
   // No actions: the lead answers in prose, so there is no emission to constrain.
   // Served over SSE by serve.ts rather than the queue, so drive() never sees it.
-  chat: { arch: packaged("chat"), workflow: "lead", actions: [], halts: [] },
+  chat: { arch: packaged(KIND_PLUGINS.chat), workflow: "lead", actions: [], halts: [] },
 };
 
 // A plugin's plugin.yaml, which carries the arch layer too. Resolved against the

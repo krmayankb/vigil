@@ -8,6 +8,7 @@ whole table.
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
+from core.config import get_settings
 from core.memory.entity_keys import entity_context_candidates
 from core.storage.connection import get_db_manager
 from core.storage.shared_ioc_repository import SharedIOCRepository, make_key
@@ -54,14 +55,43 @@ class SharedIntelligence:
     def check_overlap(
         self, finding: Dict[str, Any], exclude_id: Optional[str] = None
     ) -> List[str]:
-        """Live investigations already covering one of this finding's entities."""
+        """Live investigations already covering one of this finding's entities.
+
+        A busy entity does not count: one named in the operator's ignore list, or one
+        already in ``triage_busy_entity_threshold`` live investigations -- a domain
+        controller, a NAT gateway, a shared service account. Sharing one of those
+        says nothing about whether two findings are the same work, and merging on it
+        would pour unrelated alerts into whichever case holds it.
+        """
         keys = _keys_from_finding(finding)
         if not keys:
             return []
 
-        overlapping = self._with_repo(
-            "overlap lookup", lambda repo: repo.open_investigations_for(keys), set()
-        )
+        settings = get_settings()
+        ignored = {
+            key.strip().lower()
+            for key in (settings.triage_overlap_ignore or "").split(",")
+            if key.strip()
+        }
+        threshold = settings.triage_busy_entity_threshold
+
+        def lookup(repo: SharedIOCRepository) -> Set[str]:
+            found: Set[str] = set()
+            for key in sorted(keys):
+                if key.lower() in ignored:
+                    continue
+                live = repo.open_investigations_for([key])
+                if threshold > 0 and len(live - {exclude_id}) >= threshold:
+                    logger.info(
+                        "%s is in %d live investigations; not merging on it alone",
+                        key,
+                        len(live),
+                    )
+                    continue
+                found |= live
+            return found
+
+        overlapping = self._with_repo("overlap lookup", lookup, set())
         if exclude_id:
             overlapping.discard(exclude_id)
         return sorted(overlapping)

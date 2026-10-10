@@ -221,6 +221,7 @@ def _load() -> tuple[list[dict], dict[str, dict], dict[str, str], set[str]]:
                     "merged_into": row.merged_into,
                     "created_at": _naive(row.created_at),
                     "decided_at": _naive(row.decided_at),
+                    "triage_decision": row.triage_decision,
                 }
             )
     return rows, findings, workflows, case_ids
@@ -285,6 +286,9 @@ def _present(
         "source_evidence": _evidence(finding) if kind == "detection" else None,
         "description": finding.get("description") if finding else None,
         "finding_id": row.get("finding_id"),
+        # What triage took the row for and why it went where it did; null for a
+        # row decided before triage recorded one (core/triage/decision.py).
+        "triage_decision": row.get("triage_decision"),
         "created_at": _iso(created if isinstance(created, datetime) else None),
         "decided_at": _iso(decided if isinstance(decided, datetime) else None),
     }

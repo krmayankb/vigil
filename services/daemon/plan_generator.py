@@ -167,25 +167,18 @@ DEFAULT_STEPS = [
 
 
 def select_workflow(finding: Dict[str, Any]) -> str:
-    """Select the most appropriate workflow for a finding based on its characteristics."""
-    severity = (finding.get("severity") or "").lower()
-    recommended = (finding.get("recommended_action") or "").lower()
-    category = (finding.get("category") or "").lower()
-    mitre = finding.get("mitre_predictions") or {}
+    """The workflow the default route table gives a finding, before enablement.
 
-    if recommended in ("isolate", "block") or severity == "critical":
-        return FALLBACK_WORKFLOW
+    The rules live in core.triage.classify.RulesV1 and the destinations in
+    core.triage.routes.DEFAULT_ROUTES; the daemon routes through core.triage, which
+    also reads the editable table and turned-off workflows.
+    """
+    from core.triage.classify import DEFAULT_CLASSIFIER
+    from core.triage.routes import DEFAULT_ROUTES
 
-    if category in ("malware", "ransomware"):
-        return "forensic-analysis"
-
-    if len(mitre) >= 3:
-        return "full-investigation"
-
-    if severity == "high":
-        return "full-investigation"
-
-    return FALLBACK_WORKFLOW
+    activity = DEFAULT_CLASSIFIER.classify(finding).activity_class
+    held = DEFAULT_ROUTES.get(activity)
+    return held.workflow_id if held is not None else FALLBACK_WORKFLOW
 
 
 def _build_entity_section(finding: Dict[str, Any]) -> str:

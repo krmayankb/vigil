@@ -263,6 +263,16 @@ class WorkflowDefinition:
         declared = self.metadata.get("run_kind")
         return str(declared) if declared else COMPOSE_RUN_KIND
 
+    # The plugin the agent runs this on: the definition's own `plugin:`, else the
+    # one its run kind runs on. Carried on the job so the run says which plugin it
+    # was, and so a definition can name another once plugins load per run.
+    @property
+    def plugin(self) -> str:
+        from core.triage.routes import plugin_for
+
+        declared = self.metadata.get("plugin")
+        return str(declared) if declared else (plugin_for(self.run_kind) or self.run_kind)
+
     @property
     def use_case(self) -> str:
         return self.metadata.get("use_case", "")
@@ -290,6 +300,7 @@ class WorkflowDefinition:
             # The console reads this to know a run takes a turn count rather than
             # walking phases, instead of keying off the workflow id.
             "run_kind": self.run_kind,
+            "plugin": self.plugin,
             # Derived, so the console asks whether a definition drives the
             # hypothesis loop rather than listing the kinds that do. A new
             # hunt-like kind joins HUNT_LIKE_RUN_KINDS and every client follows.
@@ -545,6 +556,7 @@ class WorkflowsService:
         agent layer mirrors as each phase completes.
         """
         from core.agents.queue import build_start_job, enqueue_run
+        from core.triage.budgets import budget_for
 
         workflow = self.get_workflow(workflow_id)
         if not workflow:
@@ -623,6 +635,8 @@ class WorkflowsService:
                     # edited definition reaches the next run.
                     "arch": "",
                     "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
+                    "plugin": workflow.plugin,
+                    "budget": budget_for(workflow.id),
                     "config": "",
                     "prompt": self._build_target_context(parameters),
                     # On the job, not in the playbook: the reference names a definition

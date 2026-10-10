@@ -80,6 +80,10 @@ except Exception:
         _intake_queue_depth
     ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
+from core.triage.classify import DEFAULT_CLASSIFIER, HUMAN_ASK, SCHEDULED, Classification
+from core.triage.budgets import budget_for
+from core.triage.decision import decision_record
+from core.triage.routes import route as route_activity
 from core.agents.queue import (
     RUN_KINDS,
     automated_backlog,
@@ -100,7 +104,7 @@ from core.storage.models import (
 from core.threat_intel.mitre_lookup import iter_techniques, resolve_technique
 from core.workflows.enablement import is_enabled
 from core.workflows.hypothesis_subjects import kept_subjects
-from core.workflows.routing import FALLBACK_WORKFLOW, SHADOW_WORKFLOW_ID
+from core.workflows.routing import SHADOW_WORKFLOW_ID
 from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
@@ -109,7 +113,6 @@ from services.daemon.plan_generator import (
     generate_initial_context,
     generate_initial_state,
     generate_plan,
-    select_workflow,
 )
 from services.daemon.shared_intel import SharedIntelligence
 from services.daemon.workdir import WorkdirManager
@@ -184,7 +187,7 @@ def _link_cases(case_a: str, case_b: str, notes: str) -> None:
 
 
 def lift_ai_enrichment(finding: Dict) -> Dict:
-    """Copy ``ai_enrichment`` keys onto the top level ``select_workflow`` reads."""
+    """Copy ``ai_enrichment`` keys onto the top level the triage classifier reads."""
     nested = finding.get("ai_enrichment")
     if not isinstance(nested, dict) or not nested:
         return finding
@@ -800,18 +803,34 @@ class Orchestrator:
             "detection", finding_severity=finding.get("severity")
         )
 
+        # Classified before the overlap check, so a merged row still says what it was.
+        classification = DEFAULT_CLASSIFIER.classify(finding)
         if self._merge_if_overlaps(finding, trigger_id):
+            self._record_triage(
+                trigger_id,
+                decision_record(classification, priority=priority, merged_into="open work"),
+            )
             return
 
-        workflow_id = select_workflow(finding)
-        if not is_enabled(workflow_id):
+        routed = route_activity(classification)
+        workflow_id = routed.workflow_id
+        if routed.fell_back is not None:
             logger.info(
-                "workflow %s is turned off; routing finding %s to %s",
-                workflow_id,
+                "finding %s went to %s: %s",
                 finding.get("finding_id"),
-                FALLBACK_WORKFLOW,
+                workflow_id,
+                routed.fell_back,
             )
-            workflow_id = FALLBACK_WORKFLOW
+        self._record_triage(
+            trigger_id,
+            decision_record(
+                classification,
+                routed,
+                run_kind=self._run_kind_or_none(workflow_id),
+                lane="automated",
+                priority=priority,
+            ),
+        )
         finding_id = finding.get("finding_id")
         await self._create_investigation(
             workflow_id=workflow_id,
@@ -880,6 +899,24 @@ class Orchestrator:
     ):
         """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
+        # The item names its workflow; the decision records that, and the lane a
+        # person's ask goes on.
+        scheduled = (item.get("trigger_type") or "manual") != "manual"
+        self._record_triage(
+            trigger_id,
+            decision_record(
+                Classification(
+                    SCHEDULED if scheduled else HUMAN_ASK,
+                    1.0,
+                    "a schedule named its workflow" if scheduled else "a person named the workflow",
+                    "named",
+                ),
+                workflow_id=workflow_id,
+                run_kind=self._run_kind_or_none(workflow_id),
+                lane="automated" if scheduled else "human",
+                priority=item.get("priority") or "medium",
+            ),
+        )
         finding_ids = item.get("finding_ids") or []
         case_id = item.get("case_id") or None
         hypothesis = item.get("hypothesis")
@@ -1307,6 +1344,35 @@ class Orchestrator:
     # A missing workflow and a kind outside RUN_KINDS are refused, not coerced:
     # the caller's except marks the investigation failed rather than queueing a
     # run no worker has a loop for.
+    def _plugin_of(self, workflow_id: str) -> Optional[str]:
+        workflow = self._workflows.get_workflow(workflow_id)
+        return None if workflow is None else workflow.plugin
+
+    def _run_kind_or_none(self, workflow_id: str) -> Optional[str]:
+        try:
+            return self._declared_run_kind(workflow_id)
+        except Exception:  # noqa: BLE001 -- the decision says so; the launch decides
+            return None
+
+    def _record_triage(self, trigger_id: Optional[int], record: Dict) -> None:
+        """Put the triage decision on the intake row, for the Triage screen."""
+        if trigger_id is None:
+            return
+        try:
+            from sqlalchemy import update
+
+            from core.storage.connection import get_db_manager
+            from core.storage.models import IntakeTrigger
+
+            with get_db_manager().session_scope() as session:
+                session.execute(
+                    update(IntakeTrigger)
+                    .where(IntakeTrigger.id == trigger_id)
+                    .values(triage_decision=record)
+                )
+        except Exception as exc:  # noqa: BLE001 -- the launch matters more than its record
+            logger.warning("could not record the triage decision for row %s: %s", trigger_id, exc)
+
     def _declared_run_kind(self, workflow_id: str) -> str:
         workflow = self._workflows.get_workflow(workflow_id)
         if workflow is None:
@@ -1332,6 +1398,8 @@ class Orchestrator:
         request = {
             # The workflow resolves both layers, so no config path travels beside it.
             "playbook": f"workflow:{inv_record['workflow_id']}",
+            "plugin": self._plugin_of(inv_record["workflow_id"]),
+            "budget": budget_for(inv_record["workflow_id"]),
             "config": "",
             "arch": "",
             "prompt": self.workdir.read_file(inv_id, "context.md") or "",

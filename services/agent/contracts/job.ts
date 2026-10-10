@@ -42,6 +42,12 @@ export interface StartRequest {
   playbook: string;
   config: string;
   prompt: string;
+  // The plugin the workflow names (core/triage/routes.py RUN_KIND_PLUGINS by
+  // default). Optional and nullable, so a job queued before it still parses.
+  plugin?: string | null;
+  // The run's share of the fleet budget: its workflow, and that workflow's own
+  // caps in USD (core/triage/budgets.py). Absent or null: the fleet's caps only.
+  budget?: { scope: string; hourly_usd?: number | null; daily_usd?: number | null } | null;
   overrides?: Record<string, unknown>;
   // What the caller wants tested, beside what the playbook states. Per-run, so it is
   // not resolvable from the reference.

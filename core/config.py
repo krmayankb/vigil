@@ -307,6 +307,12 @@ class Settings(BaseSettings):
     # One daemon leads at a time; a second replica waits on standby. Off only for a
     # single dev box that has no Postgres lock to take.
     vigil_daemon_leader: bool = True
+    # Overlap at intake merges a finding into open work that shares an entity. An
+    # entity already in this many live investigations stops counting (0: never),
+    # and so do the comma-separated shared-IOC keys listed here (e.g.
+    # "hostname:dc01,ip:10.0.0.1"): sharing one says nothing about the work.
+    triage_busy_entity_threshold: int = 5
+    triage_overlap_ignore: str = ""
     # The fleet budget the agent workers hold every run to (USD; 0 is none). Read
     # here too because, once either is set, it governs spend and the daemon's own
     # hourly cap stands down: two caps counting spend differently would each pause

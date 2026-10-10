@@ -447,6 +447,18 @@ def add_intake_trigger_case_id(conn):
     """))
 
 
+# Why triage sent each row where it did, for the Triage screen (fleet plan,
+# phase 2). Nullable: rows decided before it carry none.
+@migration("Add triage_decision column to intake_triggers")
+def add_intake_trigger_triage_decision(conn):
+    if not _table_exists(conn, 'intake_triggers'):
+        return
+    conn.execute(text("""
+        ALTER TABLE intake_triggers
+        ADD COLUMN IF NOT EXISTS triage_decision JSONB;
+    """))
+
+
 # The dock records which page it was opened from and which case was attached
 # (#1328). Nullable, no FK: deleting a case must not delete the conversation.
 @migration("Add case_id and page_context to conversations")

@@ -139,6 +139,10 @@ class IntakeTrigger(Base):
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # What triage took the row for and where it sent it (core/triage/decision.py):
+    # class, confidence, classifier, reason, workflow, plugin, lane, and any
+    # fallback or merge. Null for a row decided before triage recorded one.
+    triage_decision: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         Index(

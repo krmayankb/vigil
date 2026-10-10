@@ -25,7 +25,7 @@ describe("the fleet's budget, held in Redis", () => {
     expect(await fleet.admit("b", "investigate")).toEqual({ admitted: true });
     expect(await fleet.admit("c", "investigate")).toEqual({ admitted: true });
     const held = await fleet.admit("d", "investigate");
-    expect(held).toMatchObject({ admitted: false, reason: "the fleet's hourly budget is spoken for" });
+    expect(held).toMatchObject({ admitted: false, reason: "the fleet hourly budget is spoken for" });
     // Until the next hour starts.
     expect((held as { retryInMs: number }).retryInMs).toBe(30 * 60_000);
   });
@@ -70,7 +70,7 @@ describe("the fleet's budget, held in Redis", () => {
     await fleet.admit("a", "investigate");
     await fleet.admit("b", "investigate");
     const held = await fleet.admit("c", "investigate");
-    expect(held).toMatchObject({ admitted: false, reason: "the fleet's daily budget is spoken for" });
+    expect(held).toMatchObject({ admitted: false, reason: "the fleet daily budget is spoken for" });
   });
 
   it("lets go of a reservation whose run went quiet", async () => {
@@ -89,5 +89,53 @@ describe("the fleet's budget, held in Redis", () => {
     await fleet.charge("a", 5);
     await fleet.settle("a", "investigate");
     down.disconnect();
+  });
+});
+
+describe("a workflow's own share of the budget", () => {
+  const scope = (hourly: number) => ({ scope: "full-investigation", hourly });
+
+  it("holds a workflow at its own cap while the fleet still has room", async () => {
+    const fleet = budget(100);
+    expect(await fleet.admit("a", "investigate", scope(2))).toEqual({ admitted: true });
+    expect(await fleet.admit("b", "investigate", scope(2))).toEqual({ admitted: true });
+    expect(await fleet.admit("c", "investigate", scope(2))).toMatchObject({ admitted: false, reason: "the full-investigation hourly budget is spoken for" });
+    // Another workflow, and a run with none, still fit under the fleet's cap.
+    expect(await fleet.admit("d", "investigate", { scope: "incident-response", hourly: 2 })).toEqual({ admitted: true });
+    expect(await fleet.admit("e", "investigate")).toEqual({ admitted: true });
+  });
+
+  it("counts a workflow's spend, and lets go of its reservation when the run ends", async () => {
+    const fleet = budget(100);
+    await fleet.admit("a", "investigate", scope(2)); // 1 reserved
+    await fleet.charge("a", 1.5); // 1.5 spent, nothing left reserved
+    expect((await fleet.admit("b", "investigate", scope(2))).admitted).toBe(false);
+    await fleet.settle("a", "investigate");
+    // Still 1.5 spent this hour, so another expected 1 does not fit under 2.
+    expect((await fleet.admit("b", "investigate", scope(2))).admitted).toBe(false);
+    expect(Number(await redis.get("vigil:budget:scope:full-investigation:hour:2026-10-10T12"))).toBeCloseTo(1.5);
+  });
+
+  it("learns what runs of a workflow cost apart from runs of its kind", async () => {
+    const fleet = budget(100, 0, 1);
+    await fleet.admit("a", "investigate", scope(100));
+    await fleet.charge("a", 3);
+    await fleet.settle("a", "investigate");
+    expect(Number(await redis.get("vigil:budget:expect:scope:full-investigation"))).toBeCloseTo(1.2);
+    expect(await redis.get("vigil:budget:expect:investigate")).toBeNull();
+  });
+
+  it("works with no fleet cap at all", async () => {
+    const fleet = budget(0);
+    expect((await fleet.admit("a", "investigate", scope(1))).admitted).toBe(true);
+    expect((await fleet.admit("b", "investigate", scope(1))).admitted).toBe(false);
+  });
+
+  it("lets go of a quiet run's share of its workflow too", async () => {
+    const fleet = budget(0, 0, 1, 1_000);
+    await fleet.admit("a", "investigate", scope(1));
+    expect((await fleet.admit("b", "investigate", scope(1))).admitted).toBe(false);
+    now += 2_000;
+    expect((await fleet.admit("b", "investigate", scope(1))).admitted).toBe(true);
   });
 });

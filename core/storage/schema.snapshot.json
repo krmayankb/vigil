@@ -76,6 +76,10 @@
       "data_type": "timestamp with time zone",
       "nullable": false
     },
+    "lane": {
+      "data_type": "text",
+      "nullable": false
+    },
     "owner": {
       "data_type": "text",
       "nullable": true
@@ -1877,6 +1881,10 @@
     "state": {
       "data_type": "character varying(20)",
       "nullable": false
+    },
+    "triage_decision": {
+      "data_type": "jsonb",
+      "nullable": true
     }
   },
   "integration_configs": {

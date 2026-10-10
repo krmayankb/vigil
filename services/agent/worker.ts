@@ -2,7 +2,7 @@ import { DelayedError, Queue, UnrecoverableError, Worker, type Job } from "bullm
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { archFor } from "./plugins/kinds.js";
+import { archFor, KIND_PLUGINS } from "./plugins/kinds.js";
 import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
 import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
@@ -52,6 +52,10 @@ type StartJob = Extract<RunJob, { reason: "start" }>;
 // unregistered run kind fails at startup rather than seven iterations in.
 export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = defaultResolver()): Promise<RunSpec> {
   const entry = archFor(job.run_kind);
+  // The plugin the workflow named. One kind runs one plugin until plugins load per
+  // run, so a job naming another is refused here, before the ledger opens; the one
+  // it ran on is journaled with the spec either way.
+  const plugin = pluginOf(job);
   const arch = job.request.arch === "" ? entry.arch : job.request.arch;
   // Carried on the job, not the reference, which names a definition many runs share.
   const asked = job.request.hypotheses ?? [];
@@ -71,6 +75,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...(asked.length === 0 ? {} : { operator_hypotheses: asked }),
           ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
           ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
+          ...(plugin === null ? {} : { plugin }),
           ...(Object.keys(gate).length === 0
             ? {}
             : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),
@@ -154,6 +159,15 @@ function defaultResolver(): PlaybookResolver {
     url: process.env["VIGIL_PLAYBOOKS_URL"] ?? "http://localhost:6987/internal/playbooks",
     token: internalToken(),
   });
+}
+
+function pluginOf(job: StartJob): string | null {
+  const runs = (KIND_PLUGINS as Record<string, string | undefined>)[job.run_kind] ?? null;
+  const asked = job.request.plugin ?? null;
+  if (asked !== null && asked !== runs) {
+    throw new SpecError(`run kind ${job.run_kind} runs on plugin ${runs ?? "none"}; this job names ${asked}, and a plugin cannot be chosen per run yet`);
+  }
+  return runs;
 }
 
 // The spec a run started under, read off the ledger. A resume re-reads no file,
@@ -700,7 +714,9 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
         // An automated start waits while the fleet's budget is spoken for. A person's
         // run is never held here, and a resume is work already under way.
         if (lane === "automated" && data.reason === "start") {
-          const admission = await budget.admit(data.run_id, data.run_kind);
+          const asked = data.request.budget ?? null;
+          const scope = asked === null ? null : { scope: asked.scope, hourly: asked.hourly_usd ?? null, daily: asked.daily_usd ?? null };
+          const admission = await budget.admit(data.run_id, data.run_kind, scope);
           if (!admission.admitted) {
             const delay = Math.round(Math.min(admission.retryInMs, 60_000) * (0.75 + Math.random() * 0.5));
             log.info("run held for the fleet budget", { run_id: data.run_id, reason: admission.reason, retry_in_ms: delay });

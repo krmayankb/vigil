@@ -44,6 +44,13 @@ ledger, re-running nothing it already did.
 | `VIGIL_FLEET_BUDGET_HOURLY_USD`, `_DAILY_USD` | worker | none | What the whole fleet may spend per hour and per day (UTC) |
 | `VIGIL_FLEET_EXPECTED_RUN_USD` | worker | 0.05 | What a run is expected to cost before any of its kind has finished |
 
+A workflow can have caps of its own: one SystemConfig row, `workflows.budgets`,
+holds them per workflow (`{"full-investigation": {"hourly_usd": 20}}`), and a run
+of that workflow is held against both the fleet's caps and its workflow's. Every
+workflow run carries its workflow as its budget scope, so what a run is expected to
+cost is learned per workflow. `VIGIL_FLEET_BUDGET_SCOPES=on` holds workflow caps
+even with no fleet cap set.
+
 An automated start reserves its expected cost and is admitted only while spend
 plus every outstanding reservation fits under the caps; otherwise it waits in the
 queue, delayed, for room. A run's calls draw its reservation down, and a run that

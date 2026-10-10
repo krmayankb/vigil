@@ -755,6 +755,10 @@ config:
   # budget bound the load instead. See docs/agent-fleet.md.
   ORCHESTRATOR_MAX_AGENTS: "3"
   ORCHESTRATOR_INTAKE_HIGH_WATER: "500"
+  # Overlap at intake skips an entity already in this many live investigations, and
+  # the comma-separated shared-IOC keys listed.
+  TRIAGE_BUSY_ENTITY_THRESHOLD: "5"
+  TRIAGE_OVERLAP_IGNORE: ""
   # One daemon leads; a second replica waits on standby.
   VIGIL_DAEMON_LEADER: "true"
   ORCHESTRATOR_MAX_ITERATIONS: "50"
@@ -768,6 +772,9 @@ config:
   VIGIL_FLEET_BUDGET_HOURLY_USD: "0"
   VIGIL_FLEET_BUDGET_DAILY_USD: "0"
   VIGIL_FLEET_EXPECTED_RUN_USD: "0.05"
+  # "on" holds workflows to their own caps (SystemConfig workflows.budgets) even
+  # with no fleet cap set.
+  VIGIL_FLEET_BUDGET_SCOPES: "off"
   VIGIL_LLM_FLEET_CONCURRENCY: "0"
   VIGIL_LLM_FLEET_RPM: "0"
   VIGIL_LLM_FLEET_TPM: "0"
