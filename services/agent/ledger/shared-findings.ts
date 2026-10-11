@@ -27,10 +27,10 @@ export class PgSharedFindings implements SharedFindings {
         for (const row of byKey.get(key) ?? []) {
           const inserted = await client.query(
             `INSERT INTO entity_findings
-               (entity_key, seq, run_id, run_kind, source_seq, kind, statement, detail, attacker_influenceable, derived_from)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid[])
+               (entity_key, seq, run_id, run_kind, source_seq, kind, statement, detail, attacker_influenceable, derived_from, observed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid[], $11)
              ON CONFLICT (entity_key, run_id, source_seq) DO NOTHING`,
-            [key, seq + 1, row.run_id, row.run_kind, row.source_seq, row.kind, row.statement, JSON.stringify(row.detail), row.attacker_influenceable, [...row.derived_from]],
+            [key, seq + 1, row.run_id, row.run_kind, row.source_seq, row.kind, row.statement, JSON.stringify(row.detail), row.attacker_influenceable, [...row.derived_from], row.observed_at ?? null],
           );
           if (inserted.rowCount === 1) seq += 1;
         }
@@ -47,9 +47,9 @@ export class PgSharedFindings implements SharedFindings {
   async since(keys: readonly string[], watermarks: Readonly<Record<string, number>>, excludeRun: string, limit: number): Promise<SharedUpdates> {
     if (keys.length === 0) return { findings: [], omitted: 0, latest: {} };
     const marks = keys.map((key) => watermarks[key] ?? 0);
-    const found = await this.pool.query<SharedFinding & { recorded_at: Date; seq: string }>(
+    const found = await this.pool.query<Omit<SharedFinding, "recorded_at" | "observed_at" | "seq"> & { recorded_at: Date; observed_at: Date | null; seq: string }>(
       `SELECT f.entity_key, f.seq, f.finding_id, f.run_id, f.run_kind, f.kind, f.status, f.statement, f.detail,
-              f.attacker_influenceable, f.derived_from, f.recorded_at
+              f.attacker_influenceable, f.derived_from, f.recorded_at, f.observed_at
          FROM entity_findings f
          JOIN unnest($1::text[], $2::bigint[]) AS m(entity_key, mark) ON m.entity_key = f.entity_key
         WHERE f.seq > m.mark AND f.run_id <> $3::uuid
@@ -57,7 +57,7 @@ export class PgSharedFindings implements SharedFindings {
         ORDER BY f.recorded_at DESC, f.entity_key, f.seq DESC`,
       [[...keys], marks, excludeRun, this.windowDays],
     );
-    const all = found.rows.map((row) => ({ ...row, seq: Number(row.seq), recorded_at: row.recorded_at.toISOString() }));
+    const all = found.rows.map((row) => ({ ...row, seq: Number(row.seq), recorded_at: row.recorded_at.toISOString(), observed_at: row.observed_at === null ? null : row.observed_at.toISOString() }));
     const latest = await this.latest(keys, excludeRun);
     return { findings: all.slice(0, limit), omitted: Math.max(0, all.length - limit), latest };
   }

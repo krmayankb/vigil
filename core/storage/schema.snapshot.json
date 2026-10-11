@@ -1444,6 +1444,10 @@
       "data_type": "text",
       "nullable": false
     },
+    "observed_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": true
+    },
     "recorded_at": {
       "data_type": "timestamp with time zone",
       "nullable": false
@@ -1594,6 +1598,10 @@
       "data_type": "text",
       "nullable": false
     },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
     "statement": {
       "data_type": "text",
       "nullable": false
@@ -1682,6 +1690,10 @@
       "data_type": "jsonb",
       "nullable": false
     },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
     "source_system": {
       "data_type": "text",
       "nullable": false
@@ -1752,6 +1764,10 @@
     },
     "rationale": {
       "data_type": "text",
+      "nullable": false
+    },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
       "nullable": false
     },
     "statement": {

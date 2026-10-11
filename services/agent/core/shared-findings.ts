@@ -28,6 +28,8 @@ export interface SharedFinding {
   detail: Record<string, unknown>;
   attacker_influenceable: boolean;
   derived_from: string[];
+  // When the run saw it, and when the shared table got it.
+  observed_at: string | null;
   recorded_at: string;
 }
 
@@ -42,6 +44,8 @@ export interface Publication {
   detail: Record<string, unknown>;
   attacker_influenceable: boolean;
   derived_from: readonly string[];
+  // When the run saw it: the time of the ledger event it came from.
+  observed_at?: string;
 }
 
 // What is newer than the run last saw, at most `limit` of it, newest first, with

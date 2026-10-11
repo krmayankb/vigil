@@ -41,3 +41,11 @@ ALTER TABLE episodic_gaps      ADD COLUMN IF NOT EXISTS provenance jsonb NOT NUL
 
 COMMENT ON COLUMN episodic_verdicts.provenance IS
     'How the row came to be: plugin, run kind and outcome, review stance, the answer given and the one that stood, whether it rested on other runs, model. Empty on rows written before it existed.';
+
+-- Record time beside event time. first_seen/last_seen say when the activity
+-- happened and concluded_at when the investigation ended; recorded_at says when
+-- memory learned it. Recall as of a moment reads only what memory held then, so a
+-- run's opening read and its replay agree however late a distil landed.
+ALTER TABLE episodic_sightings ADD COLUMN IF NOT EXISTS recorded_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE episodic_verdicts  ADD COLUMN IF NOT EXISTS recorded_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE episodic_gaps      ADD COLUMN IF NOT EXISTS recorded_at timestamptz NOT NULL DEFAULT now();

@@ -75,6 +75,10 @@ class EpisodicSighting(Base):
     provenance: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    # When memory learned it, beside when it happened and when it concluded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -144,6 +148,10 @@ class EpisodicVerdict(Base):
     # the answer given against the one that stood. Empty on rows from before it.
     provenance: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # When memory learned it, beside when it happened and when it concluded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
     __table_args__ = (
@@ -229,6 +237,10 @@ class EpisodicGap(Base):
     # the answer given against the one that stood. Empty on rows from before it.
     provenance: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # When memory learned it, beside when it happened and when it concluded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
     __table_args__ = (

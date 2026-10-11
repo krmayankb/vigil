@@ -51,7 +51,7 @@ export class PublishingLedger<Kinds extends Record<string, unknown> = Record<nev
   }
 
   private async publish(runId: string, count: number, next: number): Promise<void> {
-    const held = (await this.inner.read(runId)) as readonly { kind: string; seq: number; run_kind: string; payload: unknown }[];
+    const held = (await this.inner.read(runId)) as readonly { kind: string; seq: number; run_kind: string; payload: unknown; ts: string }[];
     const opened = held.find((event) => event.kind === "run");
     if (opened === undefined || opened.run_kind === "subagent") return;
     const keys = sharedKeysOf(held, entityKeysOf(opened.payload as RunPayload));
@@ -73,7 +73,7 @@ export class PublishingLedger<Kinds extends Record<string, unknown> = Record<nev
     );
 
     const rows: Publication[] = written.flatMap((event): Publication[] => {
-      const base = { entity_keys: keys, run_id: runId, run_kind: opened.run_kind, source_seq: event.seq };
+      const base = { entity_keys: keys, run_id: runId, run_kind: opened.run_kind, source_seq: event.seq, observed_at: event.ts };
       if (event.kind === "hypothesis") {
         const claim = event.payload as HypothesisPayload;
         return [{ ...base, kind: "claim", statement: claim.statement, detail: { claim_id: claim.hypothesis_id, status: claim.status }, attacker_influenceable: false, derived_from: [] }];
@@ -108,8 +108,8 @@ export class PublishingLedger<Kinds extends Record<string, unknown> = Record<nev
 
 const PUBLISHED = new Set(["hypothesis", "link", "terminal"]);
 
-type Held = readonly { kind: string; seq: number; payload: unknown }[];
-type Base = Pick<Publication, "entity_keys" | "run_id" | "run_kind" | "source_seq">;
+type Held = readonly { kind: string; seq: number; payload: unknown; ts?: string }[];
+type Base = Pick<Publication, "entity_keys" | "run_id" | "run_kind" | "source_seq" | "observed_at">;
 
 // The run's conclusion as it stood when the run ended: the guarded field set to what
 // the review let stand, and whether it rests on other runs' findings.
@@ -137,6 +137,7 @@ function concluded(held: Held, terminal: TerminalPayload, base: Base, calls: Rea
       ...base,
       // Filed at the conclusion, so a retry of the terminal's publish writes nothing twice.
       source_seq: held[at]!.seq,
+      observed_at: held[at]!.ts ?? base.observed_at,
       kind: "conclusion",
       statement: notes.length === 0 ? said : `${said} (${notes.join("; ")})`,
       detail: {

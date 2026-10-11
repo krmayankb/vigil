@@ -89,3 +89,13 @@ describe("findings shared between runs, by entity", () => {
     expect(read.findings.map((one) => one.seq).sort((x, y) => x - y)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
   });
 });
+
+describe("when a finding happened, beside when it was shared", () => {
+  it("keeps the time the run saw it", async () => {
+    const host = entity();
+    await shared.publish([{ ...finding([host], randomUUID(), 1), observed_at: "2026-10-01T08:00:00.000Z" }]);
+    const [read] = (await shared.since([host], {}, randomUUID(), 20)).findings;
+    expect(read!.observed_at).toBe("2026-10-01T08:00:00.000Z");
+    expect(Date.parse(read!.recorded_at)).toBeGreaterThan(Date.parse(read!.observed_at!));
+  });
+});
