@@ -106,6 +106,39 @@ agent calls the verb again and the child goes on. Several hand-offs in one turn 
 at once. One level only. No shipped plugin declares delegates yet; the format and
 rules are in `services/agent/plugins/README.md`.
 
+## Memory and storage
+
+- **Every run teaches memory.** Hunts as before; investigate and root-cause runs
+  are distilled as investigation kind `run`: the run's answer (filed as holding
+  only if it ended on it unchallenged; a dismissal its review held back files
+  inconclusive), each claim on its record, and where its entities were seen.
+- **Every memory row says how it came to be** (`provenance`): plugin, run kind and
+  outcome, review stance, the answer given against the one that stood, whether it
+  rested on other runs' findings, the models. Recall returns it, so what memory is
+  trusted for can be tuned later without distilling again.
+- **Three times on a row**: when the activity happened (`first_seen`/`last_seen`),
+  when the investigation concluded (`concluded_at`), when memory learned it
+  (`recorded_at`). Recall takes `known_at` to read memory as it stood then.
+- **Contradictions are kept.** Recall marks a verdict `contested` when another
+  investigation of one of its subjects concluded the opposite, returns both, and
+  says so in the note the agent reads. Recency decides nothing.
+- **Shared findings are settled by memory**: `final` once a run's memory is
+  written; `superseded`, with a `retraction` published on the same entities, when
+  an analyst's closure of the Case contradicts a run's conclusion on it. A read of
+  an entity with more findings than it shows adds a digest: runs, standing answers,
+  superseded and retracted.
+- **Text is stored once.** Prompts, tool schemas and skills go to `agent_content`
+  by hash, not into each run's ledger (35 to 21 events, 40.7 to 29 KB per run).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `DAEMON_LEDGER_RETENTION_DAYS` | 180 | Whole ended runs older than this are retired (floor 7; 0 keeps everything). Memory from them stays |
+| `DAEMON_SHARED_FINDINGS_RETENTION_DAYS` | 30 | Shared findings older than this are deleted; 0 keeps them |
+
+The app role still cannot delete from the ledger. Retirement goes through
+`expire_agent_runs` (`45_agent_retention.sql`), which removes only whole ended runs
+past retention, so a particular run can never be removed.
+
 ## The daemon
 
 | Setting | Default | Meaning |

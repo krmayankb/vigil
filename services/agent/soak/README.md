@@ -129,3 +129,22 @@ hash, every run), not to each run's ledger as content events.
 
 The rows left in the store are mostly each run's own task text (every soak alert
 is different); system prompts, tool schemas and skills are stored once.
+
+### Storage projection (estimated, not a week's soak)
+
+Per investigate run, from `p5-content` and the shapes the distil and the shared
+findings write: run ledger 29 KB; shared findings about 4 rows and 1.5 KB (only
+with `VIGIL_SHARED_FINDINGS=on`); episodic memory about 4 rows and 2 KB (the
+run's answer, its claims, one or two sightings); the content store grows with
+distinct prompts, not runs.
+
+| Runs a day | Ledger at 180 days | Shared findings at 30 days | Memory per year |
+|---|---|---|---|
+| 1,000 | 5.2 GB | 45 MB | 0.7 GB |
+| 10,000 | 52 GB | 450 MB | 7.3 GB |
+| 100,000 | 520 GB | 4.5 GB | 73 GB |
+
+Before indexes. At the top row a single Postgres is comfortable; at the bottom
+the ledger wants partitioning by month so retention drops partitions rather than
+deleting rows, and memory wants its own retention decision. A week-long soak on a
+machine that does not pause should replace these with measurements.
