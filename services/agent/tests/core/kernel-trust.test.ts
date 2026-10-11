@@ -20,7 +20,8 @@ import type { Harness } from "../../core/loop.js";
 import { nullMemory } from "../../core/memory.js";
 import { classify, recordOf } from "../../core/record.js";
 import { registryOf } from "../../core/registry.js";
-import { replayFrames, trajectoryOf } from "../../core/replay.js";
+import { replayFrames, trajectoryOf, withStoredContent } from "../../core/replay.js";
+import { InMemoryContentStore } from "../../ledger/content.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { inputHash } from "../../core/stream.js";
@@ -305,6 +306,42 @@ describe("judges run as child runs", () => {
     // Nothing left in the script: a second ask of the reviewer would throw.
     await runAgent(harnessOf(spec, plugin, scriptedProvider([]), state), optionsOf(spec, plugin));
     expect((await state.read(childRunId(RUN, "reviewer"))).length).toBe(before);
+  });
+});
+
+describe("text kept once across runs, in the content store", () => {
+  it("leaves it off the ledger, and replays from the ledger and the store", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const content = new InMemoryContentStore();
+    const state = new InProcessState<AgentKinds>();
+    const harness = { ...harnessOf(spec, plugin, scriptedProvider(DISMISSAL), state), content };
+    expect((await runAgent(harness, optionsOf(spec, plugin))).status).toBe("completed");
+
+    const events = await state.read(RUN);
+    expect(events.some((one) => one.kind === "content")).toBe(false);
+    // The judge's ledger too: a child keeps its text where its parent does.
+    expect((await state.read(childRunId(RUN, "reviewer"))).some((one) => one.kind === "content")).toBe(false);
+    expect(content.held.size).toBeGreaterThan(0);
+
+    // The ledger alone cannot rebuild what was sent; with the store, all of it.
+    expect(replayFrames(events).missing.length).toBeGreaterThan(0);
+    const replayed = replayFrames(await withStoredContent(events, content));
+    expect(replayed.missing).toEqual([]);
+    expect(replayed.frames.filter((one) => one.mismatch !== null)).toEqual([]);
+    expect(replayed.reproduced).toBe(replayed.frames.length);
+  });
+
+  it("uses no text that does not hash to the name it was asked by", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const content = new InMemoryContentStore();
+    const state = new InProcessState<AgentKinds>();
+    await runAgent({ ...harnessOf(spec, plugin, scriptedProvider(DISMISSAL), state), content }, optionsOf(spec, plugin));
+    const [hash] = [...content.held.keys()];
+    content.held.set(hash as string, "something else entirely");
+    const replayed = replayFrames(await withStoredContent(await state.read(RUN), content));
+    expect(replayed.missing).toContain(hash);
   });
 });
 

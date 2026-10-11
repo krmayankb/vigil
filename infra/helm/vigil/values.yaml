@@ -433,6 +433,7 @@ dbInit:
     - 40_drop_custom_workflow_graph_layout.sql
     - 41_agent_run_leases_lane.sql
     - 42_entity_findings.sql
+    - 43_agent_content.sql
   resources:
     requests:
       cpu: 50m

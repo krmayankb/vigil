@@ -57,3 +57,12 @@ export interface State<Kinds extends Record<string, unknown> = Record<never, nev
 export interface ToolDispatch {
   invoke(tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>;
 }
+
+// Where the text a frame names by hash is kept when it is not on the run's own
+// ledger: one copy across every run (ledger/content.ts). Absent, the text goes on
+// the ledger as content events, once per run.
+export interface ContentStore {
+  // Idempotent: text already held under its hash is not written again.
+  put(pieces: readonly { hash: string; text: string }[]): Promise<void>;
+  get(hashes: readonly string[]): Promise<Map<string, string>>;
+}

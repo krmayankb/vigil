@@ -16,7 +16,7 @@ import { nullMemory } from "./core/memory.js";
 import { httpRecall } from "./core/recall.js";
 import { registryOf } from "./core/registry.js";
 import { remoteDispatch } from "./core/remote.js";
-import type { Memory, State } from "./core/seams.js";
+import type { ContentStore, Memory, State } from "./core/seams.js";
 import type { RunSpec } from "./core/spec.js";
 import { httpVirtualKey } from "./core/vk.js";
 import { openAiSurface } from "./core/wire.js";
@@ -118,6 +118,13 @@ export function shareFindings(shared: SharedFindings | undefined): void {
   sharedFindings = shared;
 }
 
+// Where the text model calls were shown is kept, once across every run, set by the
+// worker and the server (each owns a pool). Unset, it goes on each run's ledger.
+let contentStore: ContentStore | undefined;
+export function keepContent(store: ContentStore | undefined): void {
+  contentStore = store;
+}
+
 // Memoised across runs, since a per-run memo dies with the run, but only for as long
 // as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
 // core/config.py reads, and its default there.
@@ -168,6 +175,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     memory: httpRecall(memory, { url: tools, token: internalToken() }),
     state,
     ...(sharedFindings === undefined ? {} : { shared: sharedFindings }),
+    ...(contentStore === undefined ? {} : { content: contentStore }),
   };
 }
 

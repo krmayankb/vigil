@@ -7,7 +7,8 @@ import type { AgentKinds } from "./core/agent.js";
 import { runPlugin } from "./plugins/run.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
-import { fleetBudget, harnessFor, internalToken, shareFindings, type HarnessFactory } from "./harness.js";
+import { fleetBudget, harnessFor, internalToken, keepContent, shareFindings, type HarnessFactory } from "./harness.js";
+import { PgContentStore } from "./ledger/content.js";
 import type { FleetBudget } from "./core/fleet-budget.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
@@ -684,6 +685,7 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
   // run publishes its record as it writes it, and can read what others published.
   const shared = sharingFindings() ? new PgSharedFindings(pool) : undefined;
   shareFindings(shared);
+  keepContent(new PgContentStore(pool));
   const state: State = shared === undefined ? cached : new PublishingLedger(cached, shared);
   const consume = (lane: Lane, queue: string, concurrency: number): Worker<RunJob> => {
     const consumer = new Worker<RunJob>(

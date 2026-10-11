@@ -143,7 +143,7 @@ export interface AgentReplay {
 // What each turn was shown is the transcript up to it, and the transcript is the
 // steps before it: the kernel rebuilds a resume from exactly these, so a reader
 // rebuilding a turn reads what the model read.
-export function agentReplay(runId: string, events: readonly Envelope[]): AgentReplay {
+export function agentReplay(runId: string, events: readonly Envelope[], stored: ReadonlyMap<string, string> = new Map()): AgentReplay {
   const turns: AgentReplayTurn[] = [];
   let pending = 0;
   let conclusion: ConclusionPayload | null = null;
@@ -172,7 +172,7 @@ export function agentReplay(runId: string, events: readonly Envelope[]): AgentRe
     turns,
     conclusion,
     review,
-    frames: replayFrames(events),
+    frames: replayFrames(events, stored),
     children: events.filter((event) => event.kind === "child").map((event) => event.payload as ChildPayload),
   };
 }

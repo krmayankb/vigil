@@ -14,10 +14,12 @@ import type { Message, ToolSchema } from "./provider.js";
 import { classOf } from "./record.js";
 import { contentHash, rebuiltInput } from "./stream.js";
 
-// Replay, from the ledger and nothing else. Each model call's input is rebuilt from
-// what the ledger holds -- the content its frame names, the calls its transcript
-// lists, the recall the run opened on -- and hashed, and the hash is diffed against
-// the one the call was sent with. No tool is called and no memory is read: a replay
+// Replay, from the ledger and the text its frames name, nothing else. Each model
+// call's input is rebuilt from what the ledger holds -- the calls its transcript
+// lists, the recall the run opened on -- and the content its frame names, read off
+// the ledger or, for a run that kept its text in the content store, passed in by the
+// caller. Every piece of text is checked against its hash before it is used, wherever
+// it came from, and the rebuilt input is diffed against the hash the call was sent with. No tool is called and no memory is read: a replay
 // that re-queried would be checking today's estate against yesterday's decision.
 
 interface Envelope {
@@ -121,8 +123,10 @@ class MissingContent extends Error {
   }
 }
 
-export function replayFrames(events: readonly Envelope[]): FrameReplay {
+export function replayFrames(events: readonly Envelope[], stored: ReadonlyMap<string, string> = new Map()): FrameReplay {
   const content = contentOf(events);
+  // Text from outside the ledger counts only if it hashes to the name it was asked by.
+  for (const [hash, text] of stored) if (!content.has(hash) && contentHash(text) === hash) content.set(hash, text);
   const calls = callsByRef(events);
   const missing = new Set<string>();
   const frames: FrameCheck[] = [];
@@ -229,4 +233,30 @@ export function trajectoryOf(runId: string, events: readonly Envelope[]): Trajec
     else if (event.kind === "child") children.push(event.payload as ChildPayload);
   }
   return { run_id: runId, steps, conclusion, review, terminal, children, faithful };
+}
+
+// The hashes a ledger's frames name that it holds no content event for: what a
+// caller reads from the content store before replaying.
+export function hashesWanted(events: readonly Envelope[]): string[] {
+  const held = contentOf(events);
+  const wanted = new Set<string>();
+  for (const event of events) {
+    if (event.kind !== "frame") continue;
+    const frame = event.payload as FramePayload;
+    const named = [frame.system, frame.task, frame.recall, frame.history, frame.tail, frame.emit, ...frame.tools.map((tool) => tool.hash), ...frame.skills.map((skill) => skill.hash)];
+    for (const hash of named) if (typeof hash === "string" && !held.has(hash)) wanted.add(hash);
+  }
+  return [...wanted];
+}
+
+// A ledger with the text its frames name filled in from the content store, as the
+// content events a run without a store would have carried, so every reader of a
+// replay works as before. Text that does not hash to its name is left out, and the
+// replay then reports it missing.
+export async function withStoredContent<E extends Envelope>(events: readonly E[], store: { get(hashes: readonly string[]): Promise<Map<string, string>> } | undefined): Promise<E[]> {
+  const wanted = store === undefined ? [] : hashesWanted(events);
+  if (wanted.length === 0) return [...events];
+  const found = await (store as NonNullable<typeof store>).get(wanted);
+  const filled = [...found].filter(([hash, text]) => contentHash(text) === hash).map(([hash, text]) => ({ kind: "content", seq: -1, payload: { hash, text } }) as unknown as E);
+  return [...filled, ...events];
 }

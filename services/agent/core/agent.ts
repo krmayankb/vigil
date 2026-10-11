@@ -527,6 +527,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
     options.run_kind,
     options.plugin.skills,
     options.conversation === undefined ? agentCalls(calls).map((call) => call.ref) : null,
+    harness.content,
   );
   const stream = streamTurn<unknown, Kinds>(cfg, harness);
 
@@ -548,7 +549,7 @@ async function* work(ctx: PluginContext, held: Ledger): AsyncGenerator<StreamEve
       // What the model is about to be shown, journaled before it is: the kernel's
       // own record, not something a plugin or a reader of the stream acts on.
       if (seen.type === "frame") {
-        await harness.state.append(options.run_id, framer.events(seen.frame) as Event[]);
+        await harness.state.append(options.run_id, (await framer.events(seen.frame)) as Event[]);
         continue;
       }
       if (seen.type === "text_delta") spoken += seen.text;
@@ -823,14 +824,14 @@ export async function runSubturn<T>(ctx: PluginContext, sub: Subturn): Promise<O
     recall_limit: options.spec.runtime.recall_limit,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
-  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, [], []);
+  const framer = await Framer.open(harness.state, options.run_id, options.run_kind, [], [], harness.content);
   const stream = streamTurn<T, Kinds>(cfg, scoped);
   for (;;) {
     const next = await stream.next();
     if (next.done === true) return next.value;
     const seen = next.value;
     if (seen.type === "frame") {
-      await harness.state.append(options.run_id, framer.events(seen.frame) as Event[]);
+      await harness.state.append(options.run_id, (await framer.events(seen.frame)) as Event[]);
       continue;
     }
     if (seen.type === "usage") turn += 1;
@@ -895,7 +896,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
     await harness.state.append(child, [at("run", opening)]);
   }
 
-  const framer = await Framer.open(harness.state, child, CHILD_KIND, [], []);
+  const framer = await Framer.open(harness.state, child, CHILD_KIND, [], [], harness.content);
   const cfg: TurnConfig = { ...turn, run_id: child, run_kind: CHILD_KIND, spend_to: options.spend_to ?? { run_id: options.run_id, run_kind: options.run_kind } };
   const stream = streamTurn<T, Kinds>(cfg, harness);
   let turns = 0;
@@ -908,7 +909,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
       break;
     }
     const seen = next.value;
-    if (seen.type === "frame") await harness.state.append(child, framer.events(seen.frame) as Event[]);
+    if (seen.type === "frame") await harness.state.append(child, (await framer.events(seen.frame)) as Event[]);
     else if (seen.type === "usage") turns += 1;
     else if (seen.type === "tool_result") {
       count += 1;

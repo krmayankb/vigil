@@ -1,4 +1,18 @@
 {
+  "agent_content": {
+    "first_seen": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "hash": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "text": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
   "agent_directives": {
     "actor": {
       "data_type": "text",
