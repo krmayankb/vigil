@@ -53,7 +53,7 @@ function parentPlugin(share = 0.5): PluginManifest {
 
 function specOf(approvals: string[] = []): RunSpec {
   const entry = archFor("investigate");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") }, entry.actions);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") });
   return { ...spec, approvals, budgets: { ...spec.budgets, max_calls: 50, max_cost_usd: 2 } };
 }
 

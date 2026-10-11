@@ -21,7 +21,7 @@ export const BEACON = "10.0.0.5 is beaconing to 45.77.53.176";
 
 export function specOf(kind: "hunt" | "adjudicate" = "hunt", hypotheses = [BEACON]): RunSpec {
   const entry = archFor(kind);
-  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") }, entry.actions, entry.owned);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") }, entry.owned);
   return { ...spec, sections: { ...spec.sections, hypotheses } };
 }
 

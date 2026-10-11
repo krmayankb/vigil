@@ -1,20 +1,16 @@
 import type { Announce } from "../../core/checkpoints.js";
-import { childOrdinal, runAgent, runChild, type AgentKinds } from "../../core/agent.js";
+import { childOrdinal, runChild, type AgentKinds } from "../../core/agent.js";
 import type { Harness, TurnConfig } from "../../core/loop.js";
 import type { RunKind, RunOutcome, TerminalHandoff } from "../../contracts/events.js";
 import type { RunSpec } from "../../core/spec.js";
 import { narrativeWriter } from "./adapters.js";
+import { runPlugin } from "../run.js";
 import { narrativeInput, type Narrative } from "./narrative.js";
-import { huntSpec, recallKeysOf } from "./config.js";
 import { fold, type HuntEvent, type HuntKinds } from "./ledger.js";
 import type { HarnessFactory } from "../../harness.js";
 import type { State } from "../../core/seams.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport } from "./report.js";
-import { toolsFrom } from "../../tools/remote.js";
-import { delegablePlugin, loadPlugin } from "../index.js";
-import { huntHooks } from "./hooks.js";
-import { stopFrom } from "../rootcause/workflow.js";
 
 export interface HuntOptions {
   run_id: string;
@@ -22,7 +18,6 @@ export interface HuntOptions {
   // second opinion: the loop is the same, so this only decides how events are stamped.
   run_kind: RunKind;
   spec: RunSpec;
-  actions: readonly string[];
   queue: DirectiveQueue;
   started_by?: string;
   announce?: Announce;
@@ -59,29 +54,18 @@ export interface HuntReport {
 // name so every caller that runs a hunt runs the kernel.
 export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions): Promise<HuntReport> {
   const id = options.run_kind === "adjudicate" ? "adjudicate" : "hunt";
-  const { manifest } = loadPlugin(id);
-  const hooks = huntHooks({
-    queue: options.queue,
-    handoffs: id === "hunt",
-    ...(options.onHandoff === undefined ? {} : { onHandoff: options.onHandoff }),
-    ...(options.onFindings === undefined ? {} : { onFindings: options.onFindings }),
-    ...(options.onCost === undefined ? {} : { onCost: options.onCost }),
-  });
-  const report = await runAgent(harness as unknown as Harness<AgentKinds>, {
-    run_id: options.run_id,
-    run_kind: options.run_kind,
-    spec: options.spec,
-    plugin: manifest,
-    hooks,
-    tools: toolsFrom(options.spec.tools),
-    plugins: delegablePlugin,
-    started_by: options.started_by ?? "worker",
-    // The hunt's own: declared subjects first, else what its statements name.
-    recall_keys: recallKeysOf(huntSpec(options.spec)),
-    ...(options.announce === undefined ? {} : { announce: options.announce }),
-    stop: stopFrom(options.queue, options.run_id),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
+  const report = await runPlugin(
+    id,
+    harness as unknown as Harness<AgentKinds>,
+    { run_id: options.run_id, run_kind: options.run_kind, spec: options.spec, ...(options.started_by === undefined ? {} : { started_by: options.started_by }), ...(options.signal === undefined ? {} : { signal: options.signal }) },
+    {
+      queue: options.queue,
+      ...(options.announce === undefined ? {} : { announce: options.announce }),
+      ...(options.onHandoff === undefined ? {} : { onHandoff: options.onHandoff }),
+      ...(options.onFindings === undefined ? {} : { onFindings: options.onFindings }),
+      ...(options.onCost === undefined ? {} : { onCost: options.onCost }),
+    },
+  );
   const events = await harness.state.read(options.run_id);
   const opened = events.find((event) => event.kind === "run");
   const iterations = opened === undefined ? 0 : fold(events as readonly HuntEvent[]).hunt.iteration;
@@ -110,7 +94,7 @@ export async function narrateRun(
   // The narrator is a judge of the run, so it runs as a child of it, on its own ledger.
   const parent = { harness: harness as unknown as Harness<AgentKinds>, options: { run_id: runId, run_kind: runKind } };
   const turn = async <T>(cfg: TurnConfig) => runChild<T>(parent, `${cfg.role}:${await childOrdinal(parent, cfg.role)}`, cfg);
-  const narrative = await narrativeWriter({ harness, spec, run_id: runId, run_kind: runKind, actions: [], recall_keys: [], turn }).narrate(
+  const narrative = await narrativeWriter({ harness, spec, run_id: runId, run_kind: runKind, recall_keys: [], turn }).narrate(
     narrativeInput(projection, buildReport(projection)),
   );
   await state.append(runId, [

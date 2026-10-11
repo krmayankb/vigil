@@ -27,15 +27,14 @@ export const KIND_PLUGINS: Readonly<Record<Exclude<RunKind, "tally" | "subagent"
   chat: "chat",
 };
 
-// Which loop drives a kind, and what its workflow may act on. Named here rather
-// than switched on in the worker: an agent type is a file and an entry, not a branch.
-export type WorkflowId = "lead" | "compose" | "hunt" | "rootcause";
-
+// What the code beside a kind's plugin says about its runs: what the console and
+// memory read of them. Every kind runs the same way (plugins/run.ts); this is only
+// how its ledger is read afterwards.
 export interface ArchEntry {
   arch: string;
-  workflow: WorkflowId;
-  actions: readonly string[];
-  halts: readonly string[];
+  // Whether the kind keeps the hunt's record: its runs can be written up and replayed
+  // as hunts. hunt and adjudicate do.
+  hunt_like?: boolean;
   // Sections of the playbook and config this workflow reads. The loader accepts
   // them and looks no further: their meaning is the workflow's to give.
   owned?: Owned;
@@ -49,22 +48,15 @@ export interface ArchEntry {
   // itself says why it is not the projection. Absent means a run of this kind is
   // not distilled, which is the honest default rather than empty rows.
   distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
-  // The plugin the worker runs this kind as, on the kernel (core/agent.ts). Absent
-  // for the kinds whose plugin runs through their own wrapper.
-  plugin?: string;
 }
 
-// The hunt lead-loop, minus its arch prompt. `hunt` and `adjudicate` run this exact
-// loop — same actions, halts, ownership, projection and notes — and differ only in
-// the arch that frames the lead's job, so the shared mechanics live here and drift
-// between the kinds is impossible rather than a two-place edit. `root_cause` does
-// not: a backward trace is its own workflow.
+// What `hunt` and `adjudicate` share: ownership, projection and notes. They differ
+// only in the plugin that frames the job, so drift between them is impossible
+// rather than a two-place edit.
 // notes/projection are retyped here because this is the one place that already knows
 // the kind, the same trade the worker makes when it hands a ledger to a workflow.
 const HUNT_LOOP: Omit<ArchEntry, "arch"> = {
-  workflow: "hunt",
-  actions: ["INVESTIGATE", "EXPAND", "PIVOT", "DEEPEN", "ABANDON", "VALIDATE", "CHECKPOINT", "CONCLUDE", "HANDOFF_IR"],
-  halts: ["CONCLUDE"],
+  hunt_like: true,
   owned: { playbook: ["hypotheses", "attack_techniques", "data_domains"], config: ["enrichment", "checkpoints", "hypothesis_loop"] },
   notes: (state, runId) => huntNotes(state as unknown as State<HuntKinds>, runId),
   // Either engine answers in the hunt's shape; a kernel hunt's moves are its calls.
@@ -84,9 +76,6 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // definition that sets hypothesis_approval: ask still parses and can park.
   root_cause: {
     arch: packaged(KIND_PLUGINS.root_cause),
-    workflow: "rootcause",
-    actions: [],
-    halts: [],
     owned: { config: ["checkpoints"] },
     projection: (runId, events) => rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),
   },
@@ -97,26 +86,13 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   adjudicate: { arch: packaged(KIND_PLUGINS.adjudicate), ...HUNT_LOOP },
   investigate: {
     arch: packaged(KIND_PLUGINS.investigate),
-    workflow: "lead",
-    actions: ["EXAMINE", "CONCLUDE"],
-    halts: ["CONCLUDE"],
-    plugin: "investigate",
     // Either engine answers in the lead's shape, so the console needs no second view.
     projection: (runId, events) =>
       isAgentRun(events) ? investigateView(runId, events) : leadProjection(runId, events as readonly AgentEvent<LeadKinds>[]),
   },
-  // No actions: nothing emits one. A step ends when its agent answers, and the run
-  // ends when the list does, so there is no verb for a model to choose or to halt on.
-  compose: {
-    arch: packaged(KIND_PLUGINS.compose),
-    workflow: "compose",
-    actions: [],
-    halts: [],
-    projection: composeProjection,
-  },
-  // No actions: the lead answers in prose, so there is no emission to constrain.
+  compose: { arch: packaged(KIND_PLUGINS.compose), projection: composeProjection },
   // Served over SSE by serve.ts rather than the queue, so drive() never sees it.
-  chat: { arch: packaged(KIND_PLUGINS.chat), workflow: "lead", actions: [], halts: [] },
+  chat: { arch: packaged(KIND_PLUGINS.chat) },
 };
 
 // A plugin's plugin.yaml, which carries the arch layer too. Resolved against the
@@ -143,5 +119,5 @@ export function registeredKinds(): RunKind[] {
 // new hunt-like kind is registered above and nothing downstream has to be found and
 // widened by hand. Mirrors Python's is_hunt_like / HUNT_LIKE_RUN_KINDS.
 export function isHuntLike(kind: RunKind): boolean {
-  return REGISTERED[kind]?.workflow === "hunt";
+  return REGISTERED[kind]?.hunt_like === true;
 }

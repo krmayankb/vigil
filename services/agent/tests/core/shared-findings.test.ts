@@ -67,7 +67,7 @@ class InMemoryShared implements SharedFindings {
 
 function specOf(): RunSpec {
   const entry = archFor("investigate");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") }, entry.actions);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") });
   return { ...spec, budgets: { ...spec.budgets, max_calls: 50 } };
 }
 

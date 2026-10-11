@@ -34,6 +34,14 @@ export function pluginFor(id: string, root: string = ROOT, skills: string = SKIL
   return manifest;
 }
 
+// Every plugin this package ships: each directory here holding a plugin.yaml.
+export function pluginIds(root: string = ROOT): string[] {
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "plugin.yaml")))
+    .map((entry) => entry.name)
+    .sort();
+}
+
 export function parsePlugin(text: string, available: readonly SkillSpec[], where = "plugin.yaml"): PluginManifest {
   const raw = parseYaml(text) as Record<string, unknown> | null;
   if (typeof raw !== "object" || raw === null) throw new SpecError(`${where} is not a mapping`);

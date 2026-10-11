@@ -27,7 +27,6 @@ export interface AdapterOptions {
   // The run's kind, stamped on every turn event so a root-cause run's dispatches
   // are not journalled as "hunt". Defaults handled by the caller (ports in runHunt).
   run_kind: RunKind;
-  actions: readonly string[];
   // The entity keys the run's episodic read is keyed on, empty when the run names
   // none. The lead's alone: a worker asks about the entity in front of it through
   // the recall tool, and a second keyed read would be a second prefix.
@@ -90,7 +89,7 @@ function turnFor(options: AdapterOptions, id: string, spec: RoleSpec, task: stri
     schema: spec.output_schema,
     max_turns: runtime.max_turns,
     approvals: new Set(options.spec.approvals),
-    verbs: options.actions,
+    verbs: [],
     result_cap: runtime.result_cap,
     recall_limit: runtime.recall_limit,
     // Only the lead recalls at run start: it is the role whose prefix is the run's,

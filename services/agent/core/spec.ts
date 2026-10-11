@@ -305,20 +305,6 @@ function parseDispatch(raw: unknown, workers: readonly string[]): DispatchPolicy
   return policy;
 }
 
-// An arch may drop an action its pipeline has no use for, but one no workflow
-// handles is a dead end the lead would keep choosing.
-function assertVocabulary(schema: Record<string, unknown>, handled: readonly string[]): void {
-  const properties = asRecord(schema["properties"], "roles.lead.output_schema.properties");
-  const declared = asRecord(properties["action"], "roles.lead.output_schema.properties.action")["enum"];
-  if (!Array.isArray(declared) || declared.length === 0) {
-    throw new SpecError("roles.lead.output_schema needs a non-empty action enum");
-  }
-  const invented = declared.map(String).filter((action) => !handled.includes(action));
-  if (invented.length > 0) {
-    throw new SpecError(`roles.lead declares action(s) no workflow handles: ${invented.sort().join(", ")}`);
-  }
-}
-
 function parseRole(raw: unknown, name: string): RoleSpec {
   const record = asRecord(raw, `roles.${name}`);
   // Both optional: a role the kernel only grants tools to has no prompt of its own,
@@ -348,7 +334,7 @@ function parseWorkers(raw: unknown, preamble: string): Record<string, RoleSpec> 
 
 const ROLE_GROUPS = ["lead", ALL_WORKERS, "workers_preamble", "critic"];
 
-function parseRoles(raw: unknown, handled: readonly string[]): Roles {
+function parseRoles(raw: unknown): Roles {
   const record = asRecord(raw, "roles");
   const stray = Object.keys(record).filter((key) => !ROLE_GROUPS.includes(key));
   if (stray.length > 0) {
@@ -356,14 +342,7 @@ function parseRoles(raw: unknown, handled: readonly string[]): Roles {
   }
 
   const roles: Roles = { workers: parseWorkers(record[ALL_WORKERS], str(record["workers_preamble"]).trim()) };
-  // No lead is a declaration that the order is authored elsewhere, so there is no
-  // vocabulary to check: a workflow that sequences its own phases decides nothing.
-  if (record["lead"] !== undefined) {
-    const lead = parseRole(record["lead"], "lead");
-    // A conversational lead chooses nothing, so there is no vocabulary to check.
-    if (lead.output_schema !== null) assertVocabulary(lead.output_schema, handled);
-    roles.lead = lead;
-  }
+  if (record["lead"] !== undefined) roles.lead = parseRole(record["lead"], "lead");
   if (record["critic"] !== undefined) roles.critic = parseRole(record["critic"], "critic");
   return roles;
 }
@@ -371,13 +350,13 @@ function parseRoles(raw: unknown, handled: readonly string[]): Roles {
 // The arch layer is a plugin's plugin.yaml: its roles, dispatch and digest, named
 // by the plugin's id. The plugin's own keys are the plugin registry's to read. A
 // file with no id is a bare arch, held to the arch layer's keys alone.
-export function parseArch(text: string, handled: readonly string[]): ArchSpec {
+export function parseArch(text: string): ArchSpec {
   const parsed = asRecord(parseYaml(text), "document");
   const [front] =
     typeof parsed["id"] === "string"
       ? [{ name: parsed["id"], roles: parsed["roles"], dispatch: parsed["dispatch"], digest: parsed["digest"] }]
       : read(text, "arch");
-  const roles = parseRoles(front["roles"], handled);
+  const roles = parseRoles(front["roles"]);
   return {
     name: str(front["name"]) || "unnamed",
     roles,
@@ -664,15 +643,14 @@ export function withOverrides(spec: RunSpec, overrides: Record<string, unknown> 
   };
 }
 
-export function loadArch(path: string, handled: readonly string[]): ArchSpec {
-  return load(path, (text) => parseArch(text, handled), "arch");
+export function loadArch(path: string): ArchSpec {
+  return load(path, parseArch, "arch");
 }
 
-// handled is the workflow's action set, which is what makes an arch declaring
-// anything else a load error; owned is the sections its workflow reads.
-export function buildSpec(paths: SpecPaths, handled: readonly string[], owned: Owned = NONE, prompt = ""): RunSpec {
+// owned is the sections the run's plugin reads.
+export function buildSpec(paths: SpecPaths, owned: Owned = NONE, prompt = ""): RunSpec {
   return assembleSpec({
-    arch: loadArch(paths.arch, handled),
+    arch: loadArch(paths.arch),
     config: load(paths.config, (text) => parseConfig(text, owned), "config"),
     playbook: load(paths.playbook, (text) => parsePlaybook(text, owned), "playbook"),
     prompt,

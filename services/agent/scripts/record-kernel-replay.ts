@@ -1,7 +1,6 @@
 import { gzipSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { archFor } from "../plugins/kinds.js";
 import type { ChildPayload } from "../contracts/events.js";
 import { InProcessState } from "../core/state.js";
 import { InProcessDirectiveQueue } from "../plugins/hunt/directives.js";
@@ -75,7 +74,6 @@ async function main(): Promise<void> {
     run_id: RUN,
     run_kind: "hunt",
     spec,
-    actions: archFor("hunt").actions,
     queue: new InProcessDirectiveQueue(),
   });
 

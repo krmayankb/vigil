@@ -34,7 +34,7 @@ const RUN = "7d3c2d3e-0000-4000-8000-00000000a7e5";
 const SPEC: RunSpec = (() => {
   const entry = archFor("hunt");
   const fixtures = join(import.meta.dirname, "..", "fixtures");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(fixtures, "hunt.playbook.yaml"), config: join(fixtures, "hunt.config.yaml") }, entry.actions, entry.owned);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(fixtures, "hunt.playbook.yaml"), config: join(fixtures, "hunt.config.yaml") }, entry.owned);
   return { ...spec, sections: { ...spec.sections, hypotheses: ["a host is beaconing to C2"] } };
 })();
 
@@ -190,7 +190,7 @@ describe("what an ABANDON may rest on", () => {
       (request) => ({ tool: "abandon_hypothesis", args: { hypothesis_id: hypothesisIn(request), reason: "looks benign", evidence_ids: [evidenceIn(request)] } }),
       () => ({ say: "done" }),
     ]);
-    await runHunt(harnessOf(SPEC, provider, state), { run_id: RUN, run_kind: "hunt", spec: SPEC, actions: [], queue: new InProcessDirectiveQueue() });
+    await runHunt(harnessOf(SPEC, provider, state), { run_id: RUN, run_kind: "hunt", spec: SPEC, queue: new InProcessDirectiveQueue() });
     const events = (await state.read(RUN)) as readonly HuntEvent[];
     const call = events.find((event) => event.kind === "call" && (event.payload as { tool: string }).tool === "abandon_hypothesis");
     return { call: call?.payload as { ok: boolean; result: string }, hypothesis: [...fold(events).hypotheses.values()][0]! };

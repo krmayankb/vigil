@@ -46,7 +46,7 @@ const LOOKUP: RegisteredTool = defineTool(
 function specOf(config = CONFIG): RunSpec {
   const entry = archFor("chat");
   return assembleSpec({
-    arch: loadArch(entry.arch, entry.actions),
+    arch: loadArch(entry.arch),
     playbook: parsePlaybook(""),
     config: parseConfig(config),
     prompt: "",

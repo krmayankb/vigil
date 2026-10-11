@@ -37,7 +37,7 @@ const RUN = "7d3c2d3e-0000-4000-8000-000000000b01";
 
 function specOf(): RunSpec {
   const entry = archFor("investigate");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") }, entry.actions);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") });
   // Room for every model call these scripts make, the reviewer's included.
   return { ...spec, budgets: { ...spec.budgets, max_calls: 50 } };
 }

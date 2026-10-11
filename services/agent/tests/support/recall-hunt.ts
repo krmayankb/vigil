@@ -35,7 +35,6 @@ export const recallHuntSpec = (asked: Asked = {}): RunSpec => {
   const entry = archFor("hunt");
   const spec = buildSpec(
     { arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") },
-    entry.actions,
   );
   return {
     ...spec,

@@ -35,7 +35,7 @@ const RUN = "7d3c2d3e-0000-4000-8000-00000000a001";
 
 function adjudicateSpec(): RunSpec {
   const entry = archFor("adjudicate");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") }, entry.actions, entry.owned);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") }, entry.owned);
   return { ...spec, sections: { ...spec.sections, hypotheses: [INTAKE_LINE], hypothesis_loop: true } };
 }
 
@@ -142,7 +142,7 @@ describe("a scripted adjudication runs end to end on the kernel", () => {
       state,
     };
 
-    const report = await runHunt(harness, { run_id: RUN, run_kind: "adjudicate", spec, actions: [], queue: new InProcessDirectiveQueue() });
+    const report = await runHunt(harness, { run_id: RUN, run_kind: "adjudicate", spec, queue: new InProcessDirectiveQueue() });
     expect(report.status).toBe("completed");
 
     // Escalation is never offered, and the conclusion must name a workflow.

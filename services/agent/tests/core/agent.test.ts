@@ -22,7 +22,7 @@ const RUN = "7d3c2d3e-0000-4000-8000-000000000a01";
 
 function specOf(): RunSpec {
   const entry = archFor("investigate");
-  return buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") }, entry.actions);
+  return buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") });
 }
 
 function stub(id: string): RegisteredTool {

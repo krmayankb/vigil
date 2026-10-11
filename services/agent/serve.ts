@@ -19,7 +19,7 @@ import { harnessFor, type HarnessFactory } from "./harness.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
 import { replay, type ReplayReport } from "./plugins/hunt/replay.js";
-import { agentReplay } from "./core/agent-view.js";
+import { agentProjection, agentReplay } from "./core/agent-view.js";
 import { investigateReplay } from "./plugins/investigate/legacy/replay.js";
 import { isAgentRun } from "./core/agent.js";
 import { investigateKernelReplay } from "./plugins/investigate/view.js";
@@ -68,7 +68,7 @@ export function chatSpec(request: ChatRequest): RunSpec {
   const entry = archFor("chat");
   const playbook = parsePlaybook("");
   return assembleSpec({
-    arch: loadArch(entry.arch, entry.actions),
+    arch: loadArch(entry.arch),
     playbook: directed(playbook, request.system_prompt),
     config: parseConfig(request.config),
     prompt: "",
@@ -164,10 +164,12 @@ function fail(res: ServerResponse, status: number, route: string, runId: string,
 async function foldedBy(state: State, runId: string, view: "projection" | "distil"): Promise<unknown | null> {
   const events = await state.read(runId);
   const opened = events[0];
-  if (opened === undefined || !registeredKinds().includes(opened.run_kind)) return null;
-
-  const project = archFor(opened.run_kind)[view];
-  return project === undefined ? null : project(runId, events);
+  if (opened === undefined) return null;
+  const project = registeredKinds().includes(opened.run_kind) ? archFor(opened.run_kind)[view] : undefined;
+  if (project !== undefined) return project(runId, events);
+  // A kernel run whose plugin has no view of its own -- a plugin that is files
+  // alone, or a child another run handed work to -- reads in the kernel's own shape.
+  return view === "projection" && isAgentRun(events) ? agentProjection(runId, events) : null;
 }
 
 async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse): Promise<void> {

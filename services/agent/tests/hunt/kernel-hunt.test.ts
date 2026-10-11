@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../plugins/kinds.js";
 import type { TerminalHandoff } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
@@ -31,7 +30,6 @@ describe("a hunt run by one agent", () => {
       run_id: RUN,
       run_kind: "hunt",
       spec: specOf(),
-      actions: archFor("hunt").actions,
       queue: new InProcessDirectiveQueue(),
       onHandoff: async (_run, handoff) => {
         handed.push(handoff);
@@ -90,7 +88,7 @@ describe("a hunt run by one agent", () => {
   it("refuses to conclude while a hypothesis could still be moved, and the agent carries on", async () => {
     const state = new InProcessState<HuntKinds>();
     const provider = modelOf([() => ({ tool: "conclude_hunt", args: { reason: "looks fine" } }), () => ({ say: "I will stop here." })]);
-    await runHunt(harnessOf(specOf(), provider, state), { run_id: RUN, run_kind: "hunt", spec: specOf(), actions: [], queue: new InProcessDirectiveQueue() });
+    await runHunt(harnessOf(specOf(), provider, state), { run_id: RUN, run_kind: "hunt", spec: specOf(), queue: new InProcessDirectiveQueue() });
 
     const refused = (await state.read(RUN)).find((event) => event.kind === "call" && (event.payload as { tool: string }).tool === "conclude_hunt");
     expect((refused?.payload as { ok: boolean; result: string }).ok).toBe(false);
@@ -107,7 +105,6 @@ describe("a hunt run by one agent", () => {
       run_id: RUN,
       run_kind: "hunt",
       spec: specOf(),
-      actions: [],
       queue: new InProcessDirectiveQueue(),
     });
 
@@ -124,7 +121,7 @@ describe("a hunt run by one agent", () => {
       (request) => ({ tool: "validate_hypothesis", args: { hypothesis_id: hypothesisIn(request) } }),
       () => ({ say: "done" }),
     ]);
-    await runHunt(harnessOf(specOf(), provider, state), { run_id: RUN, run_kind: "hunt", spec: specOf(), actions: [], queue: new InProcessDirectiveQueue() });
+    await runHunt(harnessOf(specOf(), provider, state), { run_id: RUN, run_kind: "hunt", spec: specOf(), queue: new InProcessDirectiveQueue() });
 
     const validated = (await state.read(RUN)).find((event) => event.kind === "call" && (event.payload as { tool: string }).tool === "validate_hypothesis");
     expect((validated?.payload as { result: string }).result).toContain("stays active");
@@ -145,7 +142,6 @@ describe("an adjudication run by one agent", () => {
       run_id: RUN,
       run_kind: "adjudicate",
       spec: specOf("adjudicate"),
-      actions: [],
       queue: new InProcessDirectiveQueue(),
     });
 

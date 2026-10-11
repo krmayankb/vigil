@@ -40,7 +40,7 @@ function specOf(extra = "", checkpoints = ""): RunSpec {
     .filter((line) => line !== "")
     .join("\n");
   return assembleSpec({
-    arch: loadArch(entry.arch, entry.actions),
+    arch: loadArch(entry.arch),
     playbook: parsePlaybook("name: root-cause\n"),
     config: parseConfig(text, entry.owned),
     prompt: "FYODOR-L is beaconing to 203.0.113.5",
