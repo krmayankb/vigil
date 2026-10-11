@@ -29,7 +29,7 @@ import type { RunSpec, ToolSpec } from "./spec.js";
 import { persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
 import { delegateTools } from "./delegation.js";
-import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
+import { classify, declaredGaps, grounded, kernelRecord, LINK_TOOL, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
 import type { RunEventKind } from "../contracts/events.js";
 
 // The kernel: one agent loop, driven by a plugin rather than a workflow. The loop
@@ -368,6 +368,10 @@ function concludeToolFor(ctx: PluginContext): RegisteredTool[] {
           // over a finding that landed while the run was working.
           const unread = await unreadShared(ctx);
           if (unread !== null) return { ok: false, failure: { kind: "refused", detail: unread } };
+          // A guarded answer the record does not stand on would be held back at
+          // review; said now, once, while the run can still link what it cites.
+          const unlinked = await ungroundedAnswer(ctx, args);
+          if (unlinked !== null) return { ok: false, failure: { kind: "refused", detail: unlinked } };
           const min = plugin.min_results;
           if (min !== undefined) {
             const held = callsIn(await ctx.harness.state.read(ctx.options.run_id));
@@ -463,6 +467,27 @@ async function unreadShared(ctx: PluginContext): Promise<string | null> {
 }
 
 const UNREAD = UNREAD_MARK;
+
+// Opens the refusal a guarded answer meets when no result it cites is linked to a
+// claim on the record, so the run is told once and is not told again.
+const UNLINKED_MARK = "[answer not on the record]";
+
+async function ungroundedAnswer(ctx: PluginContext, args: Record<string, unknown>): Promise<string | null> {
+  const { plugin } = ctx.options;
+  const guard = plugin.guard;
+  const structured = isStructured(plugin.conclusion) ? plugin.conclusion : null;
+  if (guard === undefined || structured?.citations_field === undefined || recordModeOf(plugin) !== "required") return null;
+  if (!guard.guarded.includes(String(args[guard.field] ?? ""))) return null;
+  const held = await ctx.harness.state.read(ctx.options.run_id);
+  const calls = callsIn(held);
+  if (calls.some((call) => call.tool === CONCLUDE_TOOL && call.failure === "refused" && call.result.includes(UNLINKED_MARK))) return null;
+  const cited = citedRefs(args[structured.citations_field]);
+  if (grounded(held, calls, cited)) return null;
+  return [
+    `${UNLINKED_MARK} You answered ${guard.field} ${String(args[guard.field])}, citing ${cited.length === 0 ? "nothing" : cited.join(", ")}, but no result you cite is linked to a claim on your record.`,
+    `An answer like this stands only on a cited result the record links to the claim it supports. Link the results it rests on with ${LINK_TOOL} (to the claim they support, by its id or by statement), cite them, then conclude again.`,
+  ].join(" ");
+}
 const SHARED_INLINE = 5;
 
 // The record's tools (core/record.ts), unless the plugin keeps none.

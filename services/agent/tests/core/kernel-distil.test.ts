@@ -73,7 +73,8 @@ describe("memory from a kernel run", () => {
 
   it("files a dismissal its review held back as inconclusive, never as the dismissal", async () => {
     // Benign, citing a result no claim on the record is linked to: held for review.
-    const payload = await distilled([{ calls: [call("get_finding", { finding_id: "f-1" })] }, { calls: [conclude("benign", ["r1"])] }]);
+    // Told once that nothing it cites is linked, and answering the same again.
+    const payload = await distilled([{ calls: [call("get_finding", { finding_id: "f-1" })] }, { calls: [conclude("benign", ["r1"])] }, { calls: [conclude("benign", ["r1"])] }]);
     const [answer] = payload.conclusions;
     expect(answer!.status).toBe("inconclusive");
     expect(answer!.statement).toContain("disposition: needs_review");
