@@ -1,6 +1,5 @@
 import { InfoTip } from '../../shared/InfoTip'
 import { LevelBadge } from '../../shared/LevelBadge'
-import { MeterBar } from '../../shared/MeterBar'
 import { NotMeasured } from '../../shared/NotMeasured'
 import type { MonitorMetric, PulseDay, WallBand } from '../../services/api'
 import { count, hhmm, money, pct } from './format'
@@ -149,10 +148,4 @@ export function KindsTable({ kinds, info }: { kinds: WallBand[]; info: string })
       )}
     </section>
   )
-}
-
-/** A usage meter against its limit, or the plain count when no limit is configured. */
-export function Against({ metric, label }: { metric: MonitorMetric; label: string }) {
-  if (metric.value == null || !metric.limit) return null
-  return <MeterBar pct={(metric.value / metric.limit) * 100} level={metric.level} label={label} />
 }

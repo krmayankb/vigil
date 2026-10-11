@@ -4,7 +4,7 @@ import { LevelBadge } from '../../shared/LevelBadge'
 import { EmptyState } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { monitorApi, type FleetWallPayload, type WallCell } from '../../services/api'
-import { Against, Measured, MetricTip } from './parts'
+import { MetricTip } from './parts'
 import { count, hhmm, minutes, pct, usePoll } from './format'
 import './monitor.css'
 
@@ -128,10 +128,19 @@ export default function FleetWallScreen({ go, openCase }: ConsoleScreenProps) {
           </div>
         </div>
         <div className="mn-strip-bar">
-          <Against metric={slots} label="Slots in use against the cap" />
-          <div className="mn-sub">
-            {count(slots.value)} running · {count(slots.near_limit)} near their limit
-            {data.load.value != null && ` · ${count(data.load.value)} alerts queued at intake${data.load.limit ? ` of ${count(data.load.limit)}` : ''}`}
+          {slots.value != null && slots.limit ? (
+            <div className="mn-slots-bar" role="meter" aria-label="Slots in use against the cap" aria-valuemin={0} aria-valuemax={slots.limit} aria-valuenow={slots.value}>
+              <span className="run" style={{ width: `${(Math.max(0, slots.value - slots.near_limit) / slots.limit) * 100}%` }} />
+              <span className="near" style={{ width: `${(Math.min(slots.near_limit, slots.value) / slots.limit) * 100}%` }} />
+            </div>
+          ) : (
+            <div className="mn-slots-bar" />
+          )}
+          <div className="mn-slots-text">
+            <span>{count(slots.value)} running · {count(slots.near_limit)} near their limit</span>
+            <span>
+              {slots.limit && slots.value != null ? `${count(Math.max(0, slots.limit - slots.value))} free · paused and waiting cases give their slot back` : 'No concurrency cap is set'}
+            </span>
           </div>
         </div>
         <div className="mn-strip-closed">
@@ -143,8 +152,11 @@ export default function FleetWallScreen({ go, openCase }: ConsoleScreenProps) {
             {count(closed.value)}
             {pace != null && <small className={pace >= 0 ? 'good' : 'fair'}>{` ${pace >= 0 ? '+' : ''}${pace} vs yesterday`}</small>}
           </div>
-          <div className="mn-sub">
-            {closed.without_person != null ? `${pct(closed.without_person)} without a person` : 'None closed yet today'} · Incidents: <Measured metric={data.incidents_today} render={count} />
+          <div className="mn-sub mn-one-line">
+            {closed.without_person != null ? `${pct(closed.without_person)} without a person` : 'None closed yet today'}
+            {' · '}
+            {data.incidents_today.value != null ? `${count(data.incidents_today.value)} incidents declared` : 'incidents not measured yet'}
+            {data.incidents_today.value == null && <InfoTip label="Why incidents are not measured" text={data.incidents_today.unmeasured_reason ?? ''} align="end" />}
           </div>
         </div>
       </section>
@@ -193,11 +205,11 @@ export default function FleetWallScreen({ go, openCase }: ConsoleScreenProps) {
                     <span className={`mn-rate-word ${band.without_person.level ?? ''}`}>{pct(band.without_person.value)} without a person</span>
                   )}
                 </div>
-                <div className="mn-sub">
-                  <b className="num">{count(band.open)}</b> open · <b className="num">{count(band.running.value)}</b> running
+                <div className="mn-band-line">
+                  <b>{count(band.open)}</b> open case{band.open === 1 ? '' : 's'}<span className="mn-dash"> · </span><b>{count(band.running.value)}</b> running
                 </div>
                 <div className="mn-sub" title={String(band.running.cap_text ?? '')}>
-                  {count(band.today)} runs today · {count(band.waiting)} waiting
+                  {count(band.today)} runs today · {band.waiting ? `${count(band.waiting)} waiting for a run` : 'none waiting'}
                 </div>
               </div>
               <div className="mn-cells" role="list">
@@ -212,16 +224,14 @@ export default function FleetWallScreen({ go, openCase }: ConsoleScreenProps) {
                         'mn-cell',
                         cell.state,
                         cell.heavy ? 'heavy' : '',
-                        cell.near_limit ? 'near' : '',
+                        cell.near_limit && cell.state === 'running' ? 'near' : '',
                         selected === cell.case_id ? 'selected' : '',
                         shown ? '' : 'dim',
                       ].filter(Boolean).join(' ')}
                       title={hoverLine(cell, band.name)}
                       aria-label={`Case ${cell.case_id}, ${STATE_WORD[cell.state]}`}
                       onClick={() => setSelected(cell.case_id === selected ? null : cell.case_id)}
-                    >
-                      {cell.limit_used != null && <span className="mn-cell-fill" style={{ height: `${Math.min(100, cell.limit_used * 100)}%` }} />}
-                    </button>
+                    />
                   )
                 })}
               </div>
