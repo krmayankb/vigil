@@ -1,3 +1,4 @@
+import type { ContentStore } from "./seams.js";
 import type { SharedFindings } from "./shared-findings.js";
 import { createHash } from "node:crypto";
 import type { Budget, Refusal } from "../contracts/budget.js";
@@ -27,6 +28,8 @@ export interface Harness<Kinds extends Record<string, unknown> = Record<never, n
   // What other runs have found about the same entities (core/shared-findings.ts).
   // Absent: the run neither reads nor is told of them.
   shared?: SharedFindings;
+  // Where frames' text is kept across runs. Absent: on each run's own ledger.
+  content?: ContentStore;
 }
 
 export interface TurnConfig {

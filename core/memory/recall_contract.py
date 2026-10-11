@@ -53,6 +53,8 @@ class InvestigationKind(str, Enum):
     HUNT = "hunt"
     CASE = "case"
     ANALYST = "analyst"
+    # One agent run of any plugin but the hunt, keyed by its run id.
+    RUN = "run"
 
 
 class VerdictOutcome(str, Enum):
@@ -195,6 +197,10 @@ _PROVENANCE: Tuple[str, ...] = (
     "investigation_kind",
     "investigation_id",
     "concluded_at",
+    # How the row came to be (44_episodic_runs.sql); empty on older rows.
+    "provenance",
+    # When memory learned it, beside when it happened and when it concluded.
+    "recorded_at",
 )
 
 # One row per entity, investigation and source, so growth tracks hunts and not
@@ -223,6 +229,8 @@ VERDICT_FIELDS: Tuple[str, ...] = _PROVENANCE + (
     "window",
     "window_source",
     "sources",
+    # Whether another investigation of one of its subjects concluded the opposite.
+    "contested",
 )
 
 # `source_tier` carries #728's vocabulary and is not restated. `not_evidence`

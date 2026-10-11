@@ -11,11 +11,13 @@ import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
 import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
-import type { Memory, State } from "./core/seams.js";
+import type { ContentStore, Memory, State } from "./core/seams.js";
+import { withStoredContent } from "./core/replay.js";
+import { PgContentStore } from "./ledger/content.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
 import { chatEvents, sse } from "./plugins/chat/sse.js";
 import { runChat, type Turn } from "./plugins/chat/workflow.js";
-import { harnessFor, type HarnessFactory } from "./harness.js";
+import { harnessFor, keepContent, type HarnessFactory } from "./harness.js";
 import { narrateRun } from "./plugins/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./plugins/hunt/ledger.js";
 import { replay, type ReplayReport } from "./plugins/hunt/replay.js";
@@ -27,7 +29,7 @@ import { huntKernelReplay } from "./plugins/hunt/view.js";
 import { rootCauseReplay } from "./plugins/rootcause/replay.js";
 import { Queue } from "bullmq";
 import { RUN_QUEUE, RUN_QUEUE_HUMAN, type RunJob } from "./contracts/job.js";
-import { backlog, fleetStatus } from "./core/fleet-status.js";
+import { backlog, fleetStatus, prometheusOf } from "./core/fleet-status.js";
 
 const log = logger("agent.serve");
 
@@ -215,8 +217,8 @@ async function writeNarrative(state: State, runId: string, res: ServerResponse, 
 // Memory, no verify, no append. An investigate run has no digest to rebuild, so it
 // returns the journaled decisions and the calls that followed them, and a root-cause
 // run its searches, steps and notices in order. Compose and chat stay 404.
-async function readReplay(state: State, runId: string, decisionId: string | null, res: ServerResponse): Promise<void> {
-  const events = await state.read(runId);
+async function readReplay(state: State, runId: string, decisionId: string | null, res: ServerResponse, content?: ContentStore): Promise<void> {
+  const events = await withStoredContent(await state.read(runId), content);
   const opened = events[0];
   if (opened?.run_kind === "investigate") {
     res.writeHead(200, { "content-type": "application/json" });
@@ -307,7 +309,7 @@ export interface FleetReader {
   backlog: () => Promise<number>;
 }
 
-export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun, fleet?: FleetReader): Server {
+export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun, fleet?: FleetReader, content?: ContentStore): Server {
   return createServer((req, res) => {
     void (async () => {
       // Before the auth check, because the kubelet has no token. These say only
@@ -320,6 +322,12 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
+
+      if (req.method === "GET" && url === "/metrics") {
+        if (fleet === undefined) return refuse(res, 404, "this process does not read the fleet");
+        res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
+        return void res.end(prometheusOf((await fleet.status()) as Record<string, unknown>));
+      }
 
       if (req.method === "GET" && (url === "/fleet" || url === "/fleet/backlog")) {
         if (fleet === undefined) return refuse(res, 404, "this process does not read the fleet");
@@ -347,7 +355,7 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
         return refuse(res, 400, `not a request path: ${url}`);
       }
       const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
-      if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
+      if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res, content);
 
       const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
       if (verified !== null) return readVerify(verified[1] as string, verify, res);
@@ -384,6 +392,8 @@ export function serveReady(pool: pg.Pool): Ready {
 // the worker now, and a pool cannot be shared across processes.
 if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "")) {
   const pool = new pg.Pool(poolConfig());
+  const content = new PgContentStore(pool);
+  keepContent(content);
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
   // /fleet reads the run queues and the fleet's counters too. Readiness still asks
@@ -396,6 +406,7 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
     harnessFor,
     (runId) => verifyLedger(pool, runId),
     { status: () => fleetStatus({ pool, queues, redis: sharedRedis() }), backlog: () => backlog(queues) },
+    content,
   ).listen(chatPort());
   const stop = () => {
     serving.close();

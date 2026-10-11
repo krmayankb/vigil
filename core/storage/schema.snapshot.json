@@ -1,4 +1,18 @@
 {
+  "agent_content": {
+    "first_seen": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "hash": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "text": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
   "agent_directives": {
     "actor": {
       "data_type": "text",
@@ -1430,6 +1444,10 @@
       "data_type": "text",
       "nullable": false
     },
+    "observed_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": true
+    },
     "recorded_at": {
       "data_type": "timestamp with time zone",
       "nullable": false
@@ -1572,8 +1590,16 @@
       "data_type": "text",
       "nullable": false
     },
+    "provenance": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
     "reason": {
       "data_type": "text",
+      "nullable": false
+    },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
       "nullable": false
     },
     "statement": {
@@ -1660,6 +1686,14 @@
       "data_type": "timestamp with time zone",
       "nullable": false
     },
+    "provenance": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
     "source_system": {
       "data_type": "text",
       "nullable": false
@@ -1724,8 +1758,16 @@
       "data_type": "text",
       "nullable": false
     },
+    "provenance": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
     "rationale": {
       "data_type": "text",
+      "nullable": false
+    },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
       "nullable": false
     },
     "statement": {

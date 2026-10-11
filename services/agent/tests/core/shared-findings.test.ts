@@ -49,6 +49,7 @@ class InMemoryShared implements SharedFindings {
           detail: { ...row.detail, source_seq: row.source_seq },
           attacker_influenceable: row.attacker_influenceable,
           derived_from: [...row.derived_from],
+          observed_at: row.observed_at ?? null,
           recorded_at: new Date().toISOString(),
         });
       }
@@ -152,7 +153,7 @@ describe("findings shared between runs on one entity", () => {
     const shared = new InMemoryShared();
     const ledger = new PublishingLedger(new InProcessState<AgentKinds>(), shared);
     // Benign, citing a result no claim on the record is linked to: held for review.
-    const done = await run(FIRST, [{ calls: [call("get_finding", { finding_id: "f-1" })] }, { calls: [conclude("benign", ["r1"])] }], shared, ledger);
+    const done = await run(FIRST, [{ calls: [call("get_finding", { finding_id: "f-1" })] }, { calls: [conclude("benign", ["r1"])] }, { calls: [conclude("benign", ["r1"])] }], shared, ledger);
     expect(done.report.status).toBe("completed");
     const [conclusion, ...more] = shared.rows.filter((row) => row.kind === "conclusion");
     expect(more).toEqual([]);
@@ -236,7 +237,7 @@ describe("a run on a busy entity", () => {
     };
     const done = await run(
       SECOND,
-      [{ calls: [call("get_finding", { finding_id: "f-3" })] }, { calls: [conclude("benign", ["r1"])] }, { calls: [conclude("benign", ["r1"])] }],
+      [{ calls: [call("get_finding", { finding_id: "f-3" })] }, { calls: [conclude("malicious", ["r1"])] }, { calls: [conclude("malicious", ["r1"])] }],
       busy as InMemoryShared,
       ledger,
     );

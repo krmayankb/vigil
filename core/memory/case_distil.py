@@ -58,6 +58,7 @@ from core.memory.recall_contract import (
     WindowSource,
     bounded_prose,
 )
+from core.memory.shared_findings import retract_contradicted
 from core.memory.source_tier import InvestigationKind as TierKind
 from core.memory.source_tier import SourceTier, resolve_source_tier
 from core.storage.models import (
@@ -474,6 +475,15 @@ def write_case_distil(session: Session, case_id: str) -> Dict[str, int]:
         for source in _sources(session, case_id):
             session.add(EpisodicVerdictSource(verdict_id=verdict.id, **source))
         counts = {"verdicts": 1}
+        # A person's determination outranks what a run on the Case shared: one it
+        # contradicts no longer stands, and runs still on those entities are told.
+        retract_contradicted(
+            session,
+            case_id,
+            outcome.value,
+            category.value,
+            (closed.closure.closed_by if closed.closure is not None else None) or "an analyst",
+        )
 
     write_marker(
         session,

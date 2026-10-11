@@ -84,3 +84,32 @@ describe("the backlog an autoscaler reads", () => {
     }
   });
 });
+
+describe("the fleet, for a scraper", () => {
+  it("renders the status as Prometheus gauges, and a part it could not read as down", async () => {
+    const { prometheusOf } = await import("../../core/fleet-status.js");
+    const text = prometheusOf({
+      queues: { automated: { waiting: 3, active: 2 }, human: { waiting: 0 } },
+      leases: { by_state: { running: { automated: 2 }, stalled: { human: 1 } }, stalled: [] },
+      budget: { unavailable: "redis down" },
+      dead_letters: [],
+      oldest_waiting_s: { automated: 42, human: null },
+    });
+    expect(text).toContain('vigil_agent_queue_jobs{lane="automated",state="waiting"} 3');
+    expect(text).toContain('vigil_agent_runs{state="stalled",lane="human"} 1');
+    expect(text).toContain('vigil_agent_oldest_waiting_seconds{lane="automated"} 42');
+    expect(text).toContain('vigil_agent_oldest_waiting_seconds{lane="human"} 0');
+    expect(text).toContain('vigil_fleet_part_up{part="budget"} 0');
+    expect(text).toContain('vigil_fleet_part_up{part="queues"} 1');
+    expect(text).not.toContain("vigil_fleet_spend_usd{");
+    expect(text.endsWith("\n")).toBe(true);
+  });
+
+  it("reports how long the oldest run in each lane has waited", async () => {
+    const run = randomUUID();
+    await queues.human.add("run", job(run), { jobId: run, delay: 0 });
+    const status = (await fleetStatus({ pool, queues })) as { oldest_waiting_s: Record<string, number | null> };
+    expect(status.oldest_waiting_s["human"]).toBeGreaterThanOrEqual(0);
+    await queues.human.remove(run);
+  });
+});

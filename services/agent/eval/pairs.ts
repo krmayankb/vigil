@@ -161,6 +161,7 @@ class InMemoryShared implements SharedFindings {
           detail: { ...row.detail, source_seq: row.source_seq },
           attacker_influenceable: row.attacker_influenceable,
           derived_from: [...row.derived_from],
+          observed_at: row.observed_at ?? null,
           recorded_at: new Date().toISOString(),
         });
       }

@@ -21,19 +21,27 @@ const budget = (hourly: number, daily = 0, expected = 1, holdMs = 3_600_000) =>
 describe("the fleet's budget, held in Redis", () => {
   it("admits runs while spend plus what is reserved fits, and holds the next one", async () => {
     const fleet = budget(3);
-    expect(await fleet.admit("a", "investigate")).toEqual({ admitted: true });
-    expect(await fleet.admit("b", "investigate")).toEqual({ admitted: true });
-    expect(await fleet.admit("c", "investigate")).toEqual({ admitted: true });
+    expect(await fleet.admit("a", "investigate")).toMatchObject({ admitted: true });
+    expect(await fleet.admit("b", "investigate")).toMatchObject({ admitted: true });
+    expect(await fleet.admit("c", "investigate")).toMatchObject({ admitted: true });
     const held = await fleet.admit("d", "investigate");
     expect(held).toMatchObject({ admitted: false, reason: "the fleet hourly budget is spoken for" });
     // Until the next hour starts.
     expect((held as { retryInMs: number }).retryInMs).toBe(30 * 60_000);
   });
 
+  it("says how much of the tighter cap is spoken for once a run is admitted", async () => {
+    const fleet = budget(4, 10);
+    expect(await fleet.admit("a", "investigate")).toEqual({ admitted: true, used: 0.25 });
+    expect(await fleet.admit("b", "investigate")).toEqual({ admitted: true, used: 0.5 });
+    // No cap set: nothing to be a share of.
+    expect(await budget(0, 0).admit("c", "investigate")).toEqual({ admitted: true });
+  });
+
   it("admits a run it already admitted, without reserving twice", async () => {
     const fleet = budget(1);
-    expect(await fleet.admit("a", "investigate")).toEqual({ admitted: true });
-    expect(await fleet.admit("a", "investigate")).toEqual({ admitted: true });
+    expect(await fleet.admit("a", "investigate")).toMatchObject({ admitted: true });
+    expect(await fleet.admit("a", "investigate")).toMatchObject({ admitted: true });
   });
 
   it("draws a run's reservation down as it spends, so the next run fits again", async () => {
@@ -85,7 +93,7 @@ describe("the fleet's budget, held in Redis", () => {
     const down = new Redis("redis://127.0.0.1:1/0", { maxRetriesPerRequest: 0, enableOfflineQueue: false, lazyConnect: true, retryStrategy: () => null });
     down.on("error", () => undefined);
     const fleet = new RedisFleetBudget(down, { hourly: 0.01, expected: 1, holdMs: 1_000 });
-    expect(await fleet.admit("a", "investigate")).toEqual({ admitted: true });
+    expect(await fleet.admit("a", "investigate")).toMatchObject({ admitted: true });
     await fleet.charge("a", 5);
     await fleet.settle("a", "investigate");
     down.disconnect();
@@ -97,12 +105,12 @@ describe("a workflow's own share of the budget", () => {
 
   it("holds a workflow at its own cap while the fleet still has room", async () => {
     const fleet = budget(100);
-    expect(await fleet.admit("a", "investigate", scope(2))).toEqual({ admitted: true });
-    expect(await fleet.admit("b", "investigate", scope(2))).toEqual({ admitted: true });
+    expect(await fleet.admit("a", "investigate", scope(2))).toMatchObject({ admitted: true });
+    expect(await fleet.admit("b", "investigate", scope(2))).toMatchObject({ admitted: true });
     expect(await fleet.admit("c", "investigate", scope(2))).toMatchObject({ admitted: false, reason: "the full-investigation hourly budget is spoken for" });
     // Another workflow, and a run with none, still fit under the fleet's cap.
-    expect(await fleet.admit("d", "investigate", { scope: "incident-response", hourly: 2 })).toEqual({ admitted: true });
-    expect(await fleet.admit("e", "investigate")).toEqual({ admitted: true });
+    expect(await fleet.admit("d", "investigate", { scope: "incident-response", hourly: 2 })).toMatchObject({ admitted: true });
+    expect(await fleet.admit("e", "investigate")).toMatchObject({ admitted: true });
   });
 
   it("counts a workflow's spend, and lets go of its reservation when the run ends", async () => {

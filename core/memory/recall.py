@@ -25,7 +25,10 @@ cap sees a row.
 tell it apart from an entity with a short history unless it is told.
 
 ``concluded_at <= as_of`` is a freshness filter and nothing more, never a
-substitute for logging the rows. ``27_episodic_read_log.sql`` says why on the
+substitute for logging the rows. ``known_at`` is the other time axis, asked for
+explicitly: memory as it stood then, leaving out rows recorded after it, so "what
+did memory know when this run started" has an answer. A run's own read needs
+neither for its replay, which serves the read it journaled. ``27_episodic_read_log.sql`` says why on the
 column that carries it.
 
 The log is written here, inside the query, rather than at either call site, so a
@@ -118,11 +121,13 @@ def _statement(table: str, predicate: str, matches_any: str, columns: str) -> An
             SELECT count(*) AS total
             FROM {table} AS c
             WHERE {matches_any.format(alias="c")} AND c.concluded_at <= :as_of
+              AND c.recorded_at <= :known_at
         ) AS m
         CROSS JOIN LATERAL (
             SELECT *
             FROM {table} AS p
             WHERE {predicate.format(alias="p")} AND p.concluded_at <= :as_of
+              AND p.recorded_at <= :known_at
             ORDER BY {_order_by("p")}
             LIMIT :per_key_cap
         ) AS r
@@ -146,17 +151,18 @@ _ANY_SUBJECT = "{alias}.subject_entities && CAST(:keys AS text[])"
 _SIGHTING_COLUMNS = (
     "r.id, r.entity_key, r.investigation_kind, r.investigation_id, "
     "r.source_system, r.hit_count, r.attacker_influenceable, "
-    "r.first_seen, r.last_seen, r.concluded_at"
+    "r.first_seen, r.last_seen, r.concluded_at, r.provenance, r.recorded_at"
 )
 _VERDICT_COLUMNS = (
     "r.id, r.investigation_kind, r.investigation_id, r.hypothesis_id, "
     "r.statement, r.outcome, r.rationale, r.subject_entities, "
     "r.attacker_influenceable_only, r.trust, r.first_seen, r.last_seen, "
-    "r.window_source, r.concluded_at"
+    "r.window_source, r.concluded_at, r.provenance, r.recorded_at"
 )
 _GAP_COLUMNS = (
     "r.id, r.investigation_kind, r.investigation_id, r.hypothesis_id, "
-    "r.statement, r.disposition, r.reason, r.subject_entities, r.concluded_at"
+    "r.statement, r.disposition, r.reason, r.subject_entities, r.concluded_at, "
+    "r.provenance, r.recorded_at"
 )
 
 _QUERIES = {
@@ -236,6 +242,8 @@ def _provenance(row: Mapping[str, Any]) -> Dict[str, Any]:
         "investigation_kind": row["investigation_kind"],
         "investigation_id": row["investigation_id"],
         "concluded_at": _iso(row["concluded_at"]),
+        "provenance": dict(row["provenance"] or {}),
+        "recorded_at": _iso(row["recorded_at"]),
     }
 
 
@@ -264,6 +272,9 @@ def _verdict(row: Mapping[str, Any]) -> Row:
         "window_source": row["window_source"],
         # Filled once the overall cap has said which Verdicts survive.
         "sources": [],
+        # Filled once every Verdict kept is known: whether another investigation of
+        # one of its subjects concluded the opposite.
+        "contested": False,
     }
 
 
@@ -421,10 +432,48 @@ def _log(
     )
 
 
+# What a Verdict says about its subjects, where it says either: an attack, or
+# nothing to see. A Case says it in its outcome; an agent run in the answer its
+# provenance records, and only where the answer stood. A hunt's hypotheses are
+# claims about activity, not about whether the subject is compromised, so they say
+# neither.
+def _stance(verdict: Mapping[str, Any]) -> Optional[str]:
+    kind = verdict.get("investigation_kind")
+    outcome = verdict.get("outcome")
+    if kind in ("case", "analyst"):
+        return {"proven": "attack", "false_positive": "benign"}.get(str(outcome))
+    if kind == "run" and outcome == "proven":
+        answer = str((verdict.get("provenance") or {}).get("answer", ""))
+        if answer in ("malicious", "suspicious"):
+            return "attack"
+        if answer in ("benign", "false_positive"):
+            return "benign"
+    return None
+
+
+def _mark_contested(verdicts: List[Row]) -> None:
+    """Mark every Verdict whose subject other investigations disagree about.
+
+    Contradiction is kept, not resolved by recency: both Verdicts are returned,
+    each saying it is contested, and neither outranks the other for being newer.
+    """
+    stances: Dict[str, set] = {}
+    for verdict in verdicts:
+        stance = _stance(verdict)
+        if stance is None:
+            continue
+        for key in verdict.get("subject_entities") or []:
+            stances.setdefault(key, set()).add(stance)
+    disputed = {key for key, held in stances.items() if len(held) > 1}
+    for verdict in verdicts:
+        verdict["contested"] = any(key in disputed for key in verdict.get("subject_entities") or [])
+
+
 def recall(
     keys: Iterable[str],
     *,
     as_of: Any = None,
+    known_at: Any = None,
     caller_kind: str = UNKNOWN_CALLER,
     caller_id: str = UNKNOWN_CALLER,
     session: Optional[Session] = None,
@@ -457,6 +506,8 @@ def recall(
             params = {
                 "keys": normalised,
                 "as_of": moment,
+                # Unbounded unless asked: every row memory holds now.
+                "known_at": _as_of(known_at) if known_at is not None else datetime.max.replace(tzinfo=timezone.utc),
                 "per_key_cap": RECALL_PER_KEY_CAP,
             }
             pages: Dict[str, List[_Selected]] = {}
@@ -470,6 +521,7 @@ def recall(
                 result["dropped"][kind]["overall_cap"] = spent[kind]
 
             _attach_sources(db, kept["verdicts"])
+            _mark_contested(result["verdicts"])
 
         _log(db, result, moment, caller_kind, caller_id)
 

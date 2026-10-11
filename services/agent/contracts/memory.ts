@@ -50,7 +50,7 @@ export type Stance = (typeof STANCES)[number];
 
 // Keyed by kind and id, never run_id: a run-keyed schema cannot represent the
 // Case-authored Verdicts the writer split requires. Nothing writes `analyst` yet.
-export const INVESTIGATION_KINDS = ["hunt", "case", "analyst"] as const;
+export const INVESTIGATION_KINDS = ["hunt", "case", "analyst", "run"] as const;
 export type InvestigationKind = (typeof INVESTIGATION_KINDS)[number];
 
 // handed_off is terminal for the hunt and not an ending of the claim, so it ranks
@@ -94,6 +94,12 @@ export interface RecalledProvenance {
   readonly investigation_kind: InvestigationKind;
   readonly investigation_id: string;
   readonly concluded_at: string;
+  // How the row came to be: for an agent run its plugin, how it ended, what its
+  // review said, the answer it gave against the one that stood. Empty on a row
+  // written before it existed; optional because a recall journaled then lacks it.
+  readonly provenance?: Readonly<Record<string, unknown>>;
+  // When memory learned it, beside when it happened and when it concluded.
+  readonly recorded_at?: string;
 }
 
 // One row per entity, investigation and source, so growth tracks hunts and not
@@ -132,6 +138,9 @@ export interface RecalledVerdict extends RecalledProvenance {
   readonly window: ActivityWindow;
   readonly window_source: WindowSource;
   readonly sources: readonly RecalledVerdictSource[];
+  // Whether another investigation of one of its subjects concluded the opposite.
+  // Both are kept; neither outranks the other for being newer.
+  readonly contested?: boolean;
 }
 
 // No window, which is why a Gap is not a Verdict with an empty outcome.
@@ -289,6 +298,7 @@ const verdictNote = (verdict: RecalledVerdict): string => {
   // The one thing a reader must not miss: a conclusion resting only on fields an
   // adversary could have written is not a conclusion to lean on.
   if (verdict.attacker_influenceable_only) held.push("rests only on attacker-influenceable evidence");
+  if (verdict.contested === true) held.push("contested: another investigation of these subjects concluded the opposite");
   if (verdict.rationale !== "") held.push(`because ${verdict.rationale}`);
   return held.join(" — ");
 };

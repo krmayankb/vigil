@@ -70,6 +70,15 @@ class EpisodicSighting(Base):
     concluded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    # How the row came to be (44_episodic_runs.sql): plugin, run outcome, review,
+    # the answer given against the one that stood. Empty on rows from before it.
+    provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # When memory learned it, beside when it happened and when it concluded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -134,6 +143,15 @@ class EpisodicVerdict(Base):
     window_source: Mapped[str] = mapped_column(String(16), nullable=False)
     concluded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # How the row came to be (44_episodic_runs.sql): plugin, run outcome, review,
+    # the answer given against the one that stood. Empty on rows from before it.
+    provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # When memory learned it, beside when it happened and when it concluded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
     __table_args__ = (
@@ -214,6 +232,15 @@ class EpisodicGap(Base):
     )
     concluded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # How the row came to be (44_episodic_runs.sql): plugin, run outcome, review,
+    # the answer given against the one that stood. Empty on rows from before it.
+    provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # When memory learned it, beside when it happened and when it concluded.
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
     __table_args__ = (

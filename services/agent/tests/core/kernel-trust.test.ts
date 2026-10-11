@@ -20,7 +20,8 @@ import type { Harness } from "../../core/loop.js";
 import { nullMemory } from "../../core/memory.js";
 import { classify, recordOf } from "../../core/record.js";
 import { registryOf } from "../../core/registry.js";
-import { replayFrames, trajectoryOf } from "../../core/replay.js";
+import { replayFrames, trajectoryOf, withStoredContent } from "../../core/replay.js";
+import { InMemoryContentStore } from "../../ledger/content.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { inputHash } from "../../core/stream.js";
@@ -308,6 +309,42 @@ describe("judges run as child runs", () => {
   });
 });
 
+describe("text kept once across runs, in the content store", () => {
+  it("leaves it off the ledger, and replays from the ledger and the store", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const content = new InMemoryContentStore();
+    const state = new InProcessState<AgentKinds>();
+    const harness = { ...harnessOf(spec, plugin, scriptedProvider(DISMISSAL), state), content };
+    expect((await runAgent(harness, optionsOf(spec, plugin))).status).toBe("completed");
+
+    const events = await state.read(RUN);
+    expect(events.some((one) => one.kind === "content")).toBe(false);
+    // The judge's ledger too: a child keeps its text where its parent does.
+    expect((await state.read(childRunId(RUN, "reviewer"))).some((one) => one.kind === "content")).toBe(false);
+    expect(content.held.size).toBeGreaterThan(0);
+
+    // The ledger alone cannot rebuild what was sent; with the store, all of it.
+    expect(replayFrames(events).missing.length).toBeGreaterThan(0);
+    const replayed = replayFrames(await withStoredContent(events, content));
+    expect(replayed.missing).toEqual([]);
+    expect(replayed.frames.filter((one) => one.mismatch !== null)).toEqual([]);
+    expect(replayed.reproduced).toBe(replayed.frames.length);
+  });
+
+  it("uses no text that does not hash to the name it was asked by", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const content = new InMemoryContentStore();
+    const state = new InProcessState<AgentKinds>();
+    await runAgent({ ...harnessOf(spec, plugin, scriptedProvider(DISMISSAL), state), content }, optionsOf(spec, plugin));
+    const [hash] = [...content.held.keys()];
+    content.held.set(hash as string, "something else entirely");
+    const replayed = replayFrames(await withStoredContent(await state.read(RUN), content));
+    expect(replayed.missing).toContain(hash);
+  });
+});
+
 describe("replay reads the ledger and nothing else", () => {
   it("rebuilds every call's input from the ledger and finds it is what was sent", async () => {
     const { state } = await dismissed();
@@ -483,5 +520,42 @@ describe("an agent can answer by tool, in the turn it decides", () => {
     const report = await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
     expect(report.status).toBe("completed");
     expect(provider.requests.at(-1)?.emit).toBeDefined();
+  });
+});
+
+describe("record slips the run can recover from", () => {
+  it("links to the claim an id written loosely names, and lists the ids when none matches", async () => {
+    const events: { kind: string; payload: unknown }[] = [
+      { kind: "call", payload: { ref: "r1", turn: 1, call_id: "c1", tool: "get_finding", arguments: "{}", result: "x", ok: true, failure: null, class: "served" } },
+    ];
+    const { kernelRecord } = await import("../../core/record.js");
+    const backend = kernelRecord({ read: async () => events, write: async (kind, payload) => void events.push({ kind, payload }) });
+    await backend.propose("a scheduled task locks the account");
+    const loose = await backend.link([{ evidence_id: "r1", hypothesis_id: "h-1", relation: "supports" }]);
+    expect(loose.ok).toBe(true);
+    expect(events.filter((one) => one.kind === "link").map((one) => (one.payload as { hypothesis_id: string }).hypothesis_id)).toEqual(["h1"]);
+    const unknown = await backend.link([{ evidence_id: "r1", hypothesis_id: "h7", relation: "supports" }]);
+    expect(unknown.ok).toBe(false);
+    expect(JSON.stringify(unknown)).toContain("the record holds h1");
+  });
+
+  it("tells a run once, before review, that the dismissal it gives is not on its record", async () => {
+    const spec = specOf();
+    const plugin = quiet(pluginFor("investigate"));
+    const state = new InProcessState<AgentKinds>();
+    const answer = (citations: string[]) => ({ calls: [call("conclude", { summary: "a scheduled task", disposition: "benign", confidence: "medium", citations, gaps: [], next_steps: [] })] });
+    const provider = scriptedProvider([
+      { calls: [call("get_finding", { finding_id: "f-1" }), call("propose_hypothesis", { statement: "a scheduled task locks the account" })] },
+      answer(["r1"]),
+      { calls: [call("link_evidence", { links: [{ evidence_id: "r1", hypothesis_id: "h1", stance: "supports" }] })] },
+      answer(["r1"]),
+      { emit: { stance: "uphold", reasons: "r1 shows the task", missing: [] } },
+    ]);
+    await runAgent(harnessOf(spec, plugin, provider, state), optionsOf(spec, plugin));
+    const concludes = (await state.read(RUN)).filter((one) => one.kind === "call" && (one.payload as CallPayload).tool === "conclude").map((one) => one.payload as CallPayload);
+    expect(concludes.map((one) => one.ok)).toEqual([false, true]);
+    expect(concludes[0]!.result).toContain("[answer not on the record]");
+    const review = (await state.read(RUN)).find((one) => one.kind === "review")?.payload as ReviewPayload;
+    expect(review.guarded?.final).toBe("benign");
   });
 });

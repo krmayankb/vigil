@@ -222,6 +222,13 @@ export function refusedWith(detail: string): ToolResult {
   return { ok: false, failure: { kind: "refused", detail } };
 }
 
+// The one id on the record that reads the same as one written loosely, or null.
+function sameId(asked: string, ids: readonly string[]): string | null {
+  const plain = (id: string) => id.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const matches = ids.filter((id) => plain(id) === plain(asked));
+  return matches.length === 1 ? (matches[0] as string) : null;
+}
+
 // --- the kernel's own backend --------------------------------------------------
 
 export interface KernelRecordPorts {
@@ -246,21 +253,34 @@ export function kernelRecord(ports: KernelRecordPorts): RecordBackend {
       const record = recordOf(events);
       const calls = events.filter((event) => event.kind === "call").map((event) => event.payload as CallPayload);
       const byRef = new Map(calls.map((call) => [call.ref, call]));
-      for (const one of links) {
-        if (!record.hypotheses.has(one.hypothesis_id)) return refusedWith(`${one.hypothesis_id} is not on the record; propose it first`);
+      const ids = [...record.hypotheses.keys()];
+      const resolved: LinkPayload[] = [];
+      for (const asked of links) {
+        // An id the run wrote loosely -- h-1, H1, "h 1" -- is the claim it names
+        // when exactly one claim on the record reads the same. Anything else is
+        // refused with the ids that are there, so the next call can be right.
+        const id = record.hypotheses.has(asked.hypothesis_id) ? asked.hypothesis_id : sameId(asked.hypothesis_id, ids);
+        if (id === null) {
+          return refusedWith(`${asked.hypothesis_id} is not on the record; the record holds ${ids.length === 0 ? "no claims yet" : ids.join(", ")}. Propose it first, or name one of those.`);
+        }
+        resolved.push({ ...asked, hypothesis_id: id });
+      }
+      for (const one of resolved) {
         const call = byRef.get(one.evidence_id);
         if (call === undefined) return refusedWith(`${one.evidence_id} is not a result this run holds`);
         const kind = classOf(call);
         if (kind !== "served") return refusedWith(`${one.evidence_id} was a ${kind === "defect" ? "defective call" : "visibility gap"}, not evidence`);
       }
-      for (const one of links) await ports.write("link", one);
-      return okWith([{ linked: links.length }]);
+      for (const one of resolved) await ports.write("link", one);
+      return okWith([{ linked: resolved.length }]);
     },
     ask: async (question, hypothesisId) => {
       const record = recordOf(await ports.read());
-      if (hypothesisId !== null && !record.hypotheses.has(hypothesisId)) return refusedWith(`${hypothesisId} is not on the record`);
+      const ids = [...record.hypotheses.keys()];
+      const about = hypothesisId === null || record.hypotheses.has(hypothesisId) ? hypothesisId : sameId(hypothesisId, ids);
+      if (hypothesisId !== null && about === null) return refusedWith(`${hypothesisId} is not on the record; the record holds ${ids.length === 0 ? "no claims yet" : ids.join(", ")}`);
       const question_id = `q${record.questions.size + 1}`;
-      await ports.write("question", { question_id, question, status: "open", hypothesis_id: hypothesisId });
+      await ports.write("question", { question_id, question, status: "open", hypothesis_id: about });
       return okWith([{ question_id }]);
     },
   };

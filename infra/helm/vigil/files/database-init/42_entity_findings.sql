@@ -41,3 +41,7 @@ COMMENT ON COLUMN entity_findings.attacker_influenceable IS
 
 COMMENT ON COLUMN entity_findings.derived_from IS
     'Findings of other runs this one was built on, so a reader counts one observation once however many runs repeat it.';
+
+-- Event time beside record time: when the run saw what it shared (the ledger
+-- event's own time), where recorded_at is when the shared table got it.
+ALTER TABLE entity_findings ADD COLUMN IF NOT EXISTS observed_at timestamptz;

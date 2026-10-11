@@ -43,6 +43,9 @@ class InvestigationKind(str, Enum):
 
     HUNT = "hunt"
     CASE = "case"
+    # An agent run names the tool a result came from; no tool is graded telemetry
+    # yet, so each takes the default tier.
+    RUN = "run"
 
 
 DEFAULT_TIER = SourceTier.FEED
@@ -213,6 +216,7 @@ _INTEGRATION_TIERS: Dict[str, SourceTier] = _integration_tiers()
 _TIERS_BY_KIND: Dict[InvestigationKind, Dict[str, SourceTier]] = {
     InvestigationKind.CASE: _CASE_TIERS,
     InvestigationKind.HUNT: _HUNT_TIERS,
+    InvestigationKind.RUN: {},
 }
 
 
@@ -253,6 +257,10 @@ def resolve_source_tier(
         return DEFAULT_TIER
 
     tier = _TIERS_BY_KIND[investigation_kind].get(name)
+    # An agent run's sources are tool ids, which no map grades yet: the default,
+    # said once in the map rather than warned about on every row.
+    if tier is None and investigation_kind is InvestigationKind.RUN:
+        return DEFAULT_TIER
     if tier is None:
         logger.warning(
             "Source Tier: unknown source %r on a %s, defaulting to %s",

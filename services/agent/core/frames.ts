@@ -3,13 +3,15 @@ import type { ContentPayload, FramePayload, NewEvent, RunKind } from "../contrac
 import type { SkillSpec } from "../contracts/plugin.js";
 import { canonical } from "./context.js";
 import type { Message } from "./provider.js";
+import type { ContentStore } from "./seams.js";
 import { contentHash, type FrameSeen } from "./stream.js";
 
 // What each model call was shown, journaled before it is made. The frame holds
-// hashes; the bytes behind each hash go on the ledger once per run as a content
-// event. So a replay rebuilds a call's input from this ledger alone -- the calls
-// it carries, the recall it opened on, the content it names -- and checks the
-// rebuilt bytes hash to what the call was sent. Nothing is re-queried.
+// hashes; the bytes behind each hash are kept once: in the deployment's content
+// store when it has one (shared by every run), else on this ledger as a content
+// event, once per run. So a replay rebuilds a call's input from the ledger and the
+// text its hashes name -- the calls it carries, the recall it opened on -- and
+// checks the rebuilt bytes hash to what the call was sent. Nothing is re-queried.
 
 type Event = NewEvent<Record<never, never>>;
 
@@ -23,6 +25,7 @@ export class Framer {
     // Refs of the calls already in the transcript when the stream started, in
     // order. Null when the history is the caller's own messages, not the ledger's.
     private readonly opening: readonly string[] | null,
+    private readonly store: ContentStore | undefined,
     private readonly added: string[] = [],
   ) {}
 
@@ -32,6 +35,7 @@ export class Framer {
     runKind: RunKind,
     skills: readonly SkillSpec[],
     opening: readonly string[] | null,
+    store?: ContentStore,
   ): Promise<Framer> {
     const known = new Set<string>();
     const counts = new Map<string, number>();
@@ -43,7 +47,7 @@ export class Framer {
       }
     }
     const hashed = skills.map((skill) => ({ name: skill.name, hash: contentHash(skill.body), body: skill.body }));
-    return new Framer(runId, runKind, hashed, known, counts, opening);
+    return new Framer(runId, runKind, hashed, known, counts, opening, store);
   }
 
   // A tool result this stream added to the transcript, by the ref it was journaled under.
@@ -51,14 +55,15 @@ export class Framer {
     this.added.push(ref);
   }
 
-  // The content events this frame needs that the ledger lacks, then the frame.
-  events(seen: FrameSeen): Event[] {
-    const content: Event[] = [];
+  // The frame, and the content events it needs that the ledger lacks. With a
+  // content store, the text is stored there first and the ledger gets the frame alone.
+  async events(seen: FrameSeen): Promise<Event[]> {
+    const pieces: { hash: string; text: string }[] = [];
     const hash = (text: string): string => {
       const hashed = contentHash(text);
       if (!this.known.has(hashed)) {
         this.known.add(hashed);
-        content.push(this.event("content", { hash: hashed, text }));
+        pieces.push({ hash: hashed, text });
       }
       return hashed;
     };
@@ -83,7 +88,12 @@ export class Framer {
       emit: seen.emit === null ? null : hash(stable(seen.emit)),
       input: seen.input,
     };
-    return [...content, this.event("frame", payload)];
+    if (this.store !== undefined) {
+      // Before the frame, so a frame on the ledger never names text that is nowhere.
+      await this.store.put(pieces);
+      return [this.event("frame", payload)];
+    }
+    return [...pieces.map((piece) => this.event("content", piece)), this.event("frame", payload)];
   }
 
   private event(kind: "content" | "frame", payload: ContentPayload | FramePayload): Event {

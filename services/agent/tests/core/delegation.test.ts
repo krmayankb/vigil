@@ -236,3 +236,32 @@ describe("delegates in plugin.yaml", () => {
     expect(delegablePlugin("rootcause").manifest.id).toBe("rootcause");
   });
 });
+
+describe("a lean run, admitted with the fleet's budget nearly spoken for", () => {
+  it("takes half the turns and hands nothing off", async () => {
+    const state = new InProcessState<AgentKinds>();
+    const base = specOf();
+    const spec = { ...base, sections: { ...base.sections, tier: "lean" } };
+    const plugin = { ...parentPlugin(), max_turns: 6 };
+    const { harness, tools, provider } = harnessOf(spec, plugin, [{ calls: [conclude("malicious", [])] }], state);
+    await runAgent(harness, { run_id: PARENT, run_kind: "investigate", spec, plugin, tools, plugins, recall_keys: [HOST] });
+    expect(provider.requests[0]!.tools.map((one) => one.id)).not.toContain("ask_helper");
+    const { isLean } = await import("../../core/agent.js");
+    expect(isLean(spec)).toBe(true);
+  });
+
+  it("is capped at half its plugin's turns", async () => {
+    const state = new InProcessState<AgentKinds>();
+    const base = specOf();
+    const spec = { ...base, sections: { ...base.sections, tier: "lean" } };
+    const plugin = { ...parentPlugin(), max_turns: 6 };
+    const look = { calls: [call("get_finding", { finding_id: "f-1" })] };
+    const answer = { emit: { summary: "capped", disposition: "inconclusive", confidence: "low", citations: [], gaps: [], next_steps: [] } };
+    const { harness, tools, provider } = harnessOf(spec, plugin, [look, look, look, answer], state);
+    const report = await runAgent(harness, { run_id: PARENT, run_kind: "investigate", spec, plugin, tools, recall_keys: [HOST] });
+    expect(report.status).toBe("completed");
+    // Three tool turns, then asked for its answer: half of six.
+    expect(provider.requests).toHaveLength(4);
+    expect(provider.requests[3]!.emit).toBeDefined();
+  });
+});

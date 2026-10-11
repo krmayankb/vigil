@@ -67,6 +67,8 @@ class SchedulerConfig:
     cleanup_interval: int = 86400  # Daily
     cleanup_retention_days: int = 90
     approval_expiry_days: int = 7
+    ledger_retention_days: int = 180
+    shared_findings_retention_days: int = 30
 
 
 @dataclass
@@ -178,6 +180,10 @@ class DaemonConfig:
         config.scheduler.probe_interval = settings.daemon_probe_interval
         config.scheduler.cleanup_retention_days = settings.daemon_cleanup_retention_days
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
+        config.scheduler.ledger_retention_days = settings.daemon_ledger_retention_days
+        config.scheduler.shared_findings_retention_days = (
+            settings.daemon_shared_findings_retention_days
+        )
 
         config.metrics.enabled = settings.daemon_metrics_enabled
         config.metrics.port = settings.daemon_health_port

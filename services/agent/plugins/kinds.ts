@@ -5,6 +5,7 @@ import type { State } from "../core/seams.js";
 import { SpecError, type Owned } from "../core/spec.js";
 import { composeProjection } from "./compose/projection.js";
 import { huntDistil } from "./hunt/distil.js";
+import { kernelDistil } from "./kernel-distil.js";
 import type { HuntKinds } from "./hunt/ledger.js";
 import { huntProjection } from "./hunt/projection.js";
 import { huntNotes } from "./hunt/recall.js";
@@ -77,6 +78,7 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   root_cause: {
     arch: packaged(KIND_PLUGINS.root_cause),
     owned: { config: ["checkpoints"] },
+    distil: kernelDistil,
     projection: (runId, events) => rootCauseProjection(runId, events as readonly AgentEvent<RootCauseKinds>[]),
   },
   // adjudicate is a hunt run as a second opinion: the lead is shown a finding
@@ -86,6 +88,8 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   adjudicate: { arch: packaged(KIND_PLUGINS.adjudicate), ...HUNT_LOOP },
   investigate: {
     arch: packaged(KIND_PLUGINS.investigate),
+    // Every investigation teaches memory, tagged with how it ended (kernel-distil.ts).
+    distil: kernelDistil,
     // Either engine answers in the lead's shape, so the console needs no second view.
     projection: (runId, events) =>
       isAgentRun(events) ? investigateView(runId, events) : leadProjection(runId, events as readonly AgentEvent<LeadKinds>[]),

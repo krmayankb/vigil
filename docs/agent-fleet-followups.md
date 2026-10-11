@@ -104,6 +104,36 @@ each belongs. Kept current as phases land; remove an item when it ships.
 - **A hand-off does not count as looking** for a plugin's `min_results` ask when the
   agent stops early, though it does for the check on `conclude`.
 
+## Phase 5 (memory quality and storage)
+
+- **The console page for the fleet** waits on the PRD (metrics are done: `GET
+  /metrics`). The backend does not proxy `/fleet` or `/metrics` yet.
+- **No week-long soak.** Storage targets are projected from per-run sizes
+  (`services/agent/soak/README.md`), not observed.
+- **The ledger is not partitioned.** Retention deletes whole runs in batches; at
+  tens of thousands of runs a day, monthly partitions dropped whole would be cheaper.
+- **The content store is never pruned.** Text no retained run names stays; it grows
+  with distinct prompts, not runs, so it is small.
+- **Memory has no retention.** Kept indefinitely, by decision; revisit at the
+  projected 7 GB a year per 10k runs a day.
+- **Recall does not yet act on provenance.** It returns it and marks contested
+  subjects; ranking or filtering by it (held answers, rested-on-other-runs, model)
+  is the tuning the tags were added for.
+- **A hunt's own claims say nothing to `contested`.** Only case determinations and
+  agent-run answers that stood take a side; a hunt's hypotheses are about activity.
+- **Retraction needs a Case.** A run's conclusion is superseded only through an
+  analyst's closure of the Case it worked; two runs that disagree with no Case stay
+  both standing, each marked contested in recall.
+- **Source tiers for agent runs** take the default (`feed`): tool ids are not yet
+  graded as telemetry.
+- **The lean tier is all-or-nothing** at one threshold; no gradation, and no
+  per-workflow say in whether it may run lean.
+- **An answer whose verdict contradicts its own summary** (one false alarm in the
+  final eval: disposition malicious, summary "no compromise occurred"). A
+  refuse-once consistency check at conclude would catch it; not built.
+- **A second flaky test**: `tests/integration/hunt-run.test.ts` ("hands a run back
+  on a lost lease") failed once in a full run and passed alone and in later runs.
+
 ## Parked
 
 - **User-created plugins and skills**, loaded per run so they work without a

@@ -515,3 +515,43 @@ def test_the_bridge_resolves_recall_entity_without_reaching_mcp(
 
     # Attributed even though it arrived over HTTP, which is what the log is for.
     assert read_log(session)[0]["caller_id"] == "threat_hunter"
+
+
+def _run_verdict(db, key, *, investigation, concluded, answer, outcome="proven"):
+    row = verdict(db, [key], investigation=investigation, concluded=concluded)
+    row.investigation_kind = "run"
+    row.outcome = outcome
+    row.provenance = {"answer": answer, "held": False}
+    return row
+
+
+def test_disagreeing_conclusions_are_both_returned_and_both_marked_contested(session):
+    concluded = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    _run_verdict(session, "host:ws-17", investigation="run-a", concluded=concluded, answer="benign")
+    _run_verdict(session, "host:ws-17", investigation="run-b", concluded=concluded + timedelta(hours=1), answer="malicious")
+    _run_verdict(session, "host:ws-99", investigation="run-c", concluded=concluded, answer="benign")
+    session.commit()
+
+    rows = {v["investigation_id"]: v for v in recall(["host:ws-17", "host:ws-99"], session=session)["verdicts"]}
+    assert rows["run-a"]["contested"] is True and rows["run-b"]["contested"] is True
+    assert rows["run-c"]["contested"] is False
+    assert rows["run-a"]["provenance"]["answer"] == "benign"
+
+
+def test_a_held_answer_or_a_hunts_claim_contests_nothing(session):
+    concluded = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    _run_verdict(session, "host:ws-18", investigation="run-a", concluded=concluded, answer="benign", outcome="inconclusive")
+    _run_verdict(session, "host:ws-18", investigation="run-b", concluded=concluded, answer="malicious")
+    verdict(session, ["host:ws-18"], investigation="hunt-1", concluded=concluded)
+    session.commit()
+    assert not any(v["contested"] for v in recall(["host:ws-18"], session=session)["verdicts"])
+
+
+def test_known_at_reads_memory_as_it_stood_then(session):
+    concluded = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    row = verdict(session, ["host:ws-19"], investigation="hunt-late", concluded=concluded)
+    row.recorded_at = concluded + timedelta(days=2)
+    session.commit()
+
+    assert [v["investigation_id"] for v in recall(["host:ws-19"], session=session)["verdicts"]] == ["hunt-late"]
+    assert recall(["host:ws-19"], known_at=concluded + timedelta(days=1), session=session)["verdicts"] == []

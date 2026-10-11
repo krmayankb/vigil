@@ -15,7 +15,7 @@ The soak empties its database and Redis first, so it refuses anything but its ow
 docker run -d --name vigil-soak-postgres -e POSTGRES_PASSWORD=soak -e POSTGRES_USER=soak \
   -e POSTGRES_DB=soak -p 127.0.0.1:55433:5432 postgres:16-alpine -c max_connections=400
 docker run -d --name vigil-soak-redis -p 127.0.0.1:56379:6379 redis:7-alpine
-for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain 41_agent_run_leases_lane 42_entity_findings; do
+for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain 41_agent_run_leases_lane 42_entity_findings 43_agent_content 45_agent_retention; do
   docker exec -i vigil-soak-postgres psql -q -U soak -d soak < ../../infra/database/init/$f.sql
 done
 ```
@@ -115,3 +115,36 @@ The stall is this laptop's, not the code's: every one of the 100 active runs sto
 at once mid tool call and resumes together, on both the old code and the new. It is
 the same stall p3b hit. A soak on a machine that does not pause is needed before
 any throughput number from here is trusted.
+
+## Phase 5: text kept once across runs, 2026-10-11
+
+`p5-content`, 100 runs, 2 × 50. Frames' text goes to `agent_content` (one copy per
+hash, every run), not to each run's ledger as content events.
+
+| | Before (p4) | After |
+|---|---|---|
+| Ledger events per run | 35 | 21 |
+| Ledger bytes per run | 40.7 KB | 29 KB |
+| Content store | - | 138 rows, 256 KB for 100 runs |
+
+The rows left in the store are mostly each run's own task text (every soak alert
+is different); system prompts, tool schemas and skills are stored once.
+
+### Storage projection (estimated, not a week's soak)
+
+Per investigate run, from `p5-content` and the shapes the distil and the shared
+findings write: run ledger 29 KB; shared findings about 4 rows and 1.5 KB (only
+with `VIGIL_SHARED_FINDINGS=on`); episodic memory about 4 rows and 2 KB (the
+run's answer, its claims, one or two sightings); the content store grows with
+distinct prompts, not runs.
+
+| Runs a day | Ledger at 180 days | Shared findings at 30 days | Memory per year |
+|---|---|---|---|
+| 1,000 | 5.2 GB | 45 MB | 0.7 GB |
+| 10,000 | 52 GB | 450 MB | 7.3 GB |
+| 100,000 | 520 GB | 4.5 GB | 73 GB |
+
+Before indexes. At the top row a single Postgres is comfortable; at the bottom
+the ledger wants partitioning by month so retention drops partitions rather than
+deleting rows, and memory wants its own retention decision. A week-long soak on a
+machine that does not pause should replace these with measurements.

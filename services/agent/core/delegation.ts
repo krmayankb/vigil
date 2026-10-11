@@ -6,7 +6,7 @@ import { defineTool, type RegisteredTool, type ToolResult } from "../contracts/t
 import { addTokens } from "./budget.js";
 import { childRunId } from "./frames.js";
 import type { Harness } from "./loop.js";
-import { CHILD_KIND, lastPayload, linkChild, runAgent, type AgentKinds, type PluginContext } from "./agent.js";
+import { CHILD_KIND, isLean, lastPayload, linkChild, runAgent, type AgentKinds, type PluginContext } from "./agent.js";
 import { ZERO_TOKENS } from "../contracts/budget.js";
 
 // Handing work to another plugin. A plugin names the work it may hand off in its
@@ -32,7 +32,8 @@ type Kinds = AgentKinds;
 export function delegateTools(ctx: PluginContext): RegisteredTool[] {
   const { options } = ctx;
   const declared = options.plugin.delegates ?? [];
-  if (declared.length === 0 || options.plugins === undefined || options.run_kind === CHILD_KIND || options.conversation !== undefined) return [];
+  // A lean run hands nothing off: a child is a second run's worth of spend.
+  if (declared.length === 0 || options.plugins === undefined || options.run_kind === CHILD_KIND || options.conversation !== undefined || isLean(options.spec)) return [];
   return declared.map((delegate) => delegateTool(ctx, delegate));
 }
 

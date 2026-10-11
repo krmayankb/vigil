@@ -60,6 +60,14 @@ budget never closes an alert: work waits, or a run that reaches its own budget
 parks or ends marked as cut short. Each run's own budget (`max_cost_usd`) and the
 gateway's virtual key still apply.
 
+## When money runs short
+
+Past `VIGIL_FLEET_LEAN_AT` (default 0.8) of the tighter fleet cap, an automated
+run is still admitted, but lean: half its plugin's turns, no hand-offs to other
+plugins, and `VIGIL_FLEET_LEAN_MODEL` if the deployment names one. The run's spec
+records `tier: lean`, so the console and its replay show why it ran short. A
+person's run is never lean. `0` turns this off.
+
 ## Findings shared between runs
 
 With `VIGIL_SHARED_FINDINGS=on` (default off), every run publishes its record to the
@@ -98,6 +106,39 @@ agent calls the verb again and the child goes on. Several hand-offs in one turn 
 at once. One level only. No shipped plugin declares delegates yet; the format and
 rules are in `services/agent/plugins/README.md`.
 
+## Memory and storage
+
+- **Every run teaches memory.** Hunts as before; investigate and root-cause runs
+  are distilled as investigation kind `run`: the run's answer (filed as holding
+  only if it ended on it unchallenged; a dismissal its review held back files
+  inconclusive), each claim on its record, and where its entities were seen.
+- **Every memory row says how it came to be** (`provenance`): plugin, run kind and
+  outcome, review stance, the answer given against the one that stood, whether it
+  rested on other runs' findings, the models. Recall returns it, so what memory is
+  trusted for can be tuned later without distilling again.
+- **Three times on a row**: when the activity happened (`first_seen`/`last_seen`),
+  when the investigation concluded (`concluded_at`), when memory learned it
+  (`recorded_at`). Recall takes `known_at` to read memory as it stood then.
+- **Contradictions are kept.** Recall marks a verdict `contested` when another
+  investigation of one of its subjects concluded the opposite, returns both, and
+  says so in the note the agent reads. Recency decides nothing.
+- **Shared findings are settled by memory**: `final` once a run's memory is
+  written; `superseded`, with a `retraction` published on the same entities, when
+  an analyst's closure of the Case contradicts a run's conclusion on it. A read of
+  an entity with more findings than it shows adds a digest: runs, standing answers,
+  superseded and retracted.
+- **Text is stored once.** Prompts, tool schemas and skills go to `agent_content`
+  by hash, not into each run's ledger (35 to 21 events, 40.7 to 29 KB per run).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `DAEMON_LEDGER_RETENTION_DAYS` | 180 | Whole ended runs older than this are retired (floor 7; 0 keeps everything). Memory from them stays |
+| `DAEMON_SHARED_FINDINGS_RETENTION_DAYS` | 30 | Shared findings older than this are deleted; 0 keeps them |
+
+The app role still cannot delete from the ledger. Retirement goes through
+`expire_agent_runs` (`45_agent_retention.sql`), which removes only whole ended runs
+past retention, so a particular run can never be removed.
+
 ## The daemon
 
 | Setting | Default | Meaning |
@@ -123,6 +164,15 @@ using the same bearer token, and the agent-serve network policy admits KEDA's
 namespace (`networkPolicies.agentServe.kedaNamespaceSelector`). A Redis list count
 would miss prioritised runs, which BullMQ keeps in a sorted set.
 
+
+`GET /metrics` on the same surface (same bearer token) answers in Prometheus'
+text format: `vigil_agent_queue_jobs{lane,state}`, `vigil_agent_runs{state,lane}`
+(running, waiting, due, stalled), `vigil_agent_oldest_waiting_seconds{lane}` (on
+the human lane, how long the oldest person's ask has waited),
+`vigil_fleet_spend_usd{window}` against `vigil_fleet_budget_cap_usd{window}`,
+`vigil_fleet_reserved_usd`, `vigil_fleet_reserved_runs`,
+`vigil_fleet_model_calls_in_flight` and `vigil_fleet_part_up{part}`, which is 0
+for a part that could not be read rather than reporting zeros.
 ## Deploying
 
 Every setting above is in the chart's `config` (`infra/helm/vigil/values.yaml`) and
