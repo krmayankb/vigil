@@ -352,7 +352,8 @@ def create_case_findings_finding_index(conn):
 # The CHECK below as Postgres 16 prints it back. A version that prints it
 # differently only makes _markers_widened() say no, and the step runs as before.
 MARKERS_ORIGIN_CHECK = (
-    "CHECK ((((investigation_kind = 'hunt'::text) = (origin_run_id IS NOT NULL))"
+    "CHECK ((((investigation_kind = ANY (ARRAY['hunt'::text, 'run'::text]))"
+    " = (origin_run_id IS NOT NULL))"
     " AND ((origin_run_id IS NULL) = (origin_seq IS NULL))))"
 )
 
@@ -422,10 +423,22 @@ def widen_episodic_distil_markers(conn):
     conn.execute(text("""
         ALTER TABLE episodic_distil_markers
         ADD CONSTRAINT episodic_distil_markers_origin_matches_kind CHECK (
-            (investigation_kind = 'hunt') = (origin_run_id IS NOT NULL)
+            (investigation_kind IN ('hunt', 'run')) = (origin_run_id IS NOT NULL)
             AND (origin_run_id IS NULL) = (origin_seq IS NULL)
         );
     """))
+
+
+# Memory from every agent run, not only hunts (44_episodic_runs.sql): the 'run'
+# investigation kind, provenance on every row, and record time. The init file is
+# the one statement of it, so a database kept current by this script and one built
+# from the init files end up the same. Every statement in it is idempotent.
+@migration("Episodic memory for every agent run (44_episodic_runs.sql)")
+def episodic_runs(conn):
+    if not _table_exists(conn, 'episodic_verdicts'):
+        return
+    path = project_root / "infra" / "database" / "init" / "44_episodic_runs.sql"
+    conn.execute(text(path.read_text()))
 
 
 # ---------------------------------------------------------------------------

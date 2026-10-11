@@ -62,3 +62,34 @@ those prices against the provider's current list before reading the cost row.
 Thirty synthetic cases measure direction, not rates: one case is three points.
 Run each engine at least three times before reading a difference of one or two
 cases, and read the "where they disagree" table, which lists the cases that moved.
+
+## Memory tag ablation
+
+`memory-ablation.ts` asks which provenance tags recall should filter on. For each
+pair in `pairs/pairs.yaml` it builds history (the first alert, then the second
+with shared findings on, several times), distils each run as memory files it
+(`plugins/kernel-distil.ts`, mapped as `core/memory/distil.py` does), then runs
+the second alert again with that memory recalled through one arm: none, all, or
+all less the runs one tag marks weak (`review`, `held`, `rests_on_other_runs`,
+`run_outcome`). An arm that removes nothing is `all` again and is not rerun.
+
+```sh
+npx tsx eval/memory-ablation.ts --label ab1 --histories 3 --tries 4 --concurrency 4
+npx tsx eval/ablation-score.ts eval/results/ablation-ab1
+```
+
+`ab1` (2026-10-11, gemini-2.5-pro, 60 history runs, about 140 target runs):
+
+| Memory | Correct | Unfiltered, same pairs | Attacks missed |
+|---|---|---|---|
+| none | 40% | 83% | 4 vs 0 |
+| less `review` overturned or insufficient (5 / 60 runs) | 58% | 75% | 1 vs 0 |
+| less `held` (the same 5 runs) | 67% | 75% | 0 vs 0 |
+| less `rests_on_other_runs` (14 / 60) | 82% | 75% | 0 vs 0 |
+| less `run_outcome` not completed (1 / 60) | 100% | 100% | 0 vs 0 |
+
+No history run answered wrongly, so no tag had a wrong row to catch: this
+measures what filtering costs, not what it saves. `review` and `held` marked the
+same runs, and identical input differed by 9 points, which is the noise. Rows they
+mark carry "a dismissal was overturned", a warning worth keeping; only
+`rests_on_other_runs` is a filter candidate, and it needs poisoned history to show.

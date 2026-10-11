@@ -1422,6 +1422,157 @@ export const overviewApi = {
     api.get<OverviewFeedItem>(`/overview/alerts/${encodeURIComponent(findingId)}`),
 }
 
+// Monitor reads: the Fleet Wall and Pulse (core/monitor). Every number carries its
+// limit, a level the server decided, and an info line; one Vigil does not record yet
+// is null with unmeasured_text.
+export type MonitorLevel = 'good' | 'fair' | 'poor' | null
+
+export interface MonitorMetric<T = number> {
+  value: T | null
+  limit: number | null
+  level: MonitorLevel
+  info: string
+  unmeasured_text: string | null
+  unmeasured_reason: string | null
+  [extra: string]: unknown
+}
+
+export type WallState = 'needs_you' | 'running' | 'paused' | 'waiting'
+
+export interface WallCell {
+  case_id: string
+  title: string
+  description: string | null
+  workflow_id: string
+  severity: string | null
+  state: WallState
+  reason: string
+  alerts: number
+  combined: boolean
+  heavy: boolean
+  limit_used: number | null
+  limit_level: MonitorLevel
+  near_limit: boolean
+  steps: number | null
+  owner: string | null
+  sla_seconds_left: number | null
+  decision: { title: string | null; reason: string | null; since: string | null } | null
+  incident: null
+}
+
+export interface WallBand {
+  workflow_id: string
+  name: string
+  open: number
+  running: MonitorMetric & { cap_text?: string }
+  today: number
+  cost_per_case: number | null
+  mean_steps: number | null
+  waiting: number
+  without_person: MonitorMetric & { sample?: number }
+  cells?: WallCell[]
+}
+
+export interface WallFacet {
+  key: string
+  label: string
+  count: number | null
+  unmeasured_reason?: string
+}
+
+export interface FleetWallPayload {
+  now: string
+  next_action: { count: number; case_id: string | null; title: string | null; reason: string | null } | null
+  slots: MonitorMetric & { near_limit: number }
+  closed_today: MonitorMetric & { yesterday: number; without_person: number | null }
+  incidents_today: MonitorMetric
+  load: MonitorMetric
+  facets: WallFacet[]
+  bands: WallBand[]
+  omitted: number
+  just_closed: { case_id: string; closed_at: string; by: string }[]
+  just_closed_minutes: number
+  info: { cell: string; kind: string }
+}
+
+export interface PulseDay {
+  hours: string[]
+  alerts_in: number[]
+  cases_formed: number[]
+  attached: number[]
+  closed_by_agents: number[]
+  closed_by_person: number[]
+  running: number[]
+  queued: number[]
+  decisions: number[]
+  cap: number | null
+  high_water: number | null
+  peak: { running: number; at: string | null; free: number | null }
+  dropped: MonitorMetric
+  approved_by_person: MonitorMetric
+  info: string
+  queue_info: string
+}
+
+export interface PulseGauge extends MonitorMetric {
+  key: string
+  label: string
+}
+
+export interface PulseAttention {
+  level: 'good' | 'fair' | 'poor'
+  title: string
+  why: string
+  action: string
+  door: 'needs_you' | 'throughput' | 'work'
+}
+
+export interface PulseAdjustment {
+  key: string
+  label: string
+  current: string | null
+  note: string
+  unmeasured_text?: string
+}
+
+export interface PulseSummary {
+  now: string
+  gauges: PulseGauge[]
+  attention: PulseAttention[]
+  day: PulseDay
+  adjustments: PulseAdjustment[]
+}
+
+export interface PulseThroughput {
+  now: string
+  day: PulseDay
+  kinds: WallBand[]
+  info: string
+}
+
+export interface PulseWorkRow {
+  key: string
+  label: string
+  what: string
+  count: MonitorMetric
+  ages: { label: string; count: number }[] | null
+  oldest: { minutes: number; case_id: string } | null
+}
+
+export interface PulseWork {
+  now: string
+  rows: PulseWorkRow[]
+  queue: { hours: string[]; queued: number[]; high_water: number | null; queue_info: string }
+  info: string
+}
+
+export const monitorApi = {
+  wall: () => api.get<FleetWallPayload>('/fleet-wall'),
+  summary: () => api.get<PulseSummary>('/pulse/summary'),
+  throughput: () => api.get<PulseThroughput>('/pulse/throughput'),
+  work: () => api.get<PulseWork>('/pulse/work'),
+}
+
 export interface TriageRow {
   id: number
   kind: string
