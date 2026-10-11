@@ -8,6 +8,7 @@ import { fleetLimitsFrom, openGate, RedisGate, type Gate } from "./core/fleet-ga
 import { fleetBudgetLimitsFrom, RedisFleetBudget, unboundedBudget, type FleetBudget } from "./core/fleet-budget.js";
 import { runNow } from "./core/lane.js";
 import type { Budget } from "./contracts/budget.js";
+import type { SharedFindings } from "./core/shared-findings.js";
 import type { RegisteredTool } from "./contracts/tool.js";
 import { sharedRedis } from "./core/db.js";
 import type { Harness } from "./core/loop.js";
@@ -109,6 +110,14 @@ function charged(inner: Budget): Budget {
   };
 }
 
+// What other runs have found about the same entities, set once by the worker when
+// VIGIL_SHARED_FINDINGS is on (it owns the database pool). Unset, runs neither read
+// nor publish them.
+let sharedFindings: SharedFindings | undefined;
+export function shareFindings(shared: SharedFindings | undefined): void {
+  sharedFindings = shared;
+}
+
 // Memoised across runs, since a per-run memo dies with the run, but only for as long
 // as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
 // core/config.py reads, and its default there.
@@ -158,6 +167,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // tools go to -- one address for the far side, not two to keep in step.
     memory: httpRecall(memory, { url: tools, token: internalToken() }),
     state,
+    ...(sharedFindings === undefined ? {} : { shared: sharedFindings }),
   };
 }
 

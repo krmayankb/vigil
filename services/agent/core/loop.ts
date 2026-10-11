@@ -1,3 +1,4 @@
+import type { SharedFindings } from "./shared-findings.js";
 import { createHash } from "node:crypto";
 import type { Budget, Refusal } from "../contracts/budget.js";
 import type { NewEvent, RunKind } from "../contracts/events.js";
@@ -23,6 +24,9 @@ export interface Harness<Kinds extends Record<string, unknown> = Record<never, n
   budget: Budget;
   memory: Memory;
   state: State<Kinds>;
+  // What other runs have found about the same entities (core/shared-findings.ts).
+  // Absent: the run neither reads nor is told of them.
+  shared?: SharedFindings;
 }
 
 export interface TurnConfig {

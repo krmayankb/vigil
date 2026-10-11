@@ -8,7 +8,7 @@ import { loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
-import { fleetBudget, harnessFor, internalToken, type HarnessFactory } from "./harness.js";
+import { fleetBudget, harnessFor, internalToken, shareFindings, type HarnessFactory } from "./harness.js";
 import type { FleetBudget } from "./core/fleet-budget.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
@@ -32,6 +32,8 @@ import type { State } from "./core/seams.js";
 import { httpPlaybooks, isReference, type PlaybookResolver } from "./core/playbooks.js";
 import { assembleSpec, buildSpec, DEFAULT_BUDGETS, loadArch, parseConfig, parsePlaybook, SpecError, withOverrides, type RunSpec } from "./core/spec.js";
 import { CachedLedger } from "./ledger/cache.js";
+import { PublishingLedger } from "./ledger/publish.js";
+import { PgSharedFindings } from "./ledger/shared-findings.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
 import { runCompose } from "./plugins/compose/workflow.js";
@@ -669,6 +671,12 @@ export function runConcurrency(): number {
 }
 
 // Slots each worker keeps for runs a person is waiting on, apart from the rest.
+// Off until a deployment turns it on: it changes what every run is told and when it
+// may conclude, so it is evaluated before it is the default.
+export function sharingFindings(): boolean {
+  return (process.env["VIGIL_SHARED_FINDINGS"] ?? "").trim().toLowerCase() === "on";
+}
+
 export function humanConcurrency(): number {
   const asked = Number(process.env["VIGIL_HUMAN_RUN_CONCURRENCY"]);
   return Number.isInteger(asked) && asked > 0 ? asked : Math.max(1, Math.round(runConcurrency() / 4));
@@ -706,6 +714,11 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
   // Runs read through a cache of their own ledger; dropped when the job lets go,
   // since a parked run may resume on another worker.
   const cached = new CachedLedger(ledger);
+  // Findings shared between runs on the same entities (fleet plan, phase 3): every
+  // run publishes its record as it writes it, and can read what others published.
+  const shared = sharingFindings() ? new PgSharedFindings(pool) : undefined;
+  shareFindings(shared);
+  const state: State = shared === undefined ? cached : new PublishingLedger(cached, shared);
   const consume = (lane: Lane, queue: string, concurrency: number): Worker<RunJob> => {
     const consumer = new Worker<RunJob>(
       queue,
@@ -725,7 +738,7 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
           }
         }
         try {
-          await inLane(lane, () => handle(cached, leases, data, directives, build), data.run_id);
+          await inLane(lane, () => handle(state, leases, data, directives, build), data.run_id);
           if ((await cached.terminal(data.run_id)) !== null) await budget.settle(data.run_id, data.run_kind);
         } finally {
           cached.forget(data.run_id);

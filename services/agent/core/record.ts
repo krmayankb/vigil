@@ -1,3 +1,4 @@
+import { SHARED_TOOL } from "./shared-findings.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
 import type {
   CallClass,
@@ -125,7 +126,8 @@ export function declaredGaps(
 // to a call that was served. What a guarded answer must stand on when the plugin
 // requires a record.
 export function grounded(events: readonly { kind: string; payload: unknown }[], calls: readonly CallPayload[], cited: readonly string[]): boolean {
-  const served = new Set(calls.filter((call) => classOf(call) === "served").map((call) => call.ref));
+  // Another run's finding is a lead to confirm, never the ground an answer stands on.
+  const served = new Set(calls.filter((call) => classOf(call) === "served" && call.tool !== SHARED_TOOL).map((call) => call.ref));
   const wanted = new Set(cited);
   return recordOf(events).links.some((link) => link.relation !== "neither" && served.has(link.evidence_id) && wanted.has(link.evidence_id));
 }

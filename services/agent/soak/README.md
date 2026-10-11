@@ -15,7 +15,7 @@ The soak empties its database and Redis first, so it refuses anything but its ow
 docker run -d --name vigil-soak-postgres -e POSTGRES_PASSWORD=soak -e POSTGRES_USER=soak \
   -e POSTGRES_DB=soak -p 127.0.0.1:55433:5432 postgres:16-alpine -c max_connections=400
 docker run -d --name vigil-soak-redis -p 127.0.0.1:56379:6379 redis:7-alpine
-for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain 41_agent_run_leases_lane; do
+for f in 19_agent_ledger 20_agent_directives 21_agent_run_leases 31_agent_ledger_hash_chain 41_agent_run_leases_lane 42_entity_findings; do
   docker exec -i vigil-soak-postgres psql -q -U soak -d soak < ../../infra/database/init/$f.sql
 done
 ```
@@ -88,3 +88,18 @@ runs is about 42 GB of ledger before indexes.
 | p1d | Fleet model gate of 60, 4 × 50 | Peak model calls in flight across the fleet: exactly 60 |
 | p1e | Human lane, 200 automated + 5 human on 2 × 4 | Queue wait: automated 151s median, human 11s |
 | p1f | Fleet budget $5/hour, 300 runs queued | Spent $4.98; 141 completed, 159 waited for the next hour, none failed |
+
+## Phase 3: findings shared between runs, 2026-10-10
+
+Every soak run is on the same host and IP, so this is the worst case: every run
+finds other runs' findings unread when it concludes. 2 × 50, 300 runs.
+
+| Run | Design | Completed | Model calls / run | Cost / run |
+|---|---|---|---|---|
+| c (baseline) | Sharing off | 300/300 | 3.3 | $0.036 |
+| p3d | Asked to read with the tool before concluding, up to twice | 300/300 | 7.2 | $0.10 |
+| p3e | Conclude refused once, the unread findings inline in the refusal | 300/300 | 4.3 | $0.051 |
+
+p3e: 387 runs/min, run time p50 15.4s, 40 events per run; every run met exactly
+one refusal and concluded on its next try. On real workloads the extra call is paid
+only when another run has published on the same entities meanwhile.

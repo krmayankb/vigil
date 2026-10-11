@@ -1,0 +1,122 @@
+import type { AgentEvent, CallPayload, ConclusionPayload, HypothesisPayload, LinkPayload, NewEvent, RunPayload, TerminalPayload } from "../contracts/events.js";
+import { errorFields, logger } from "../core/log.js";
+import type { ReadOptions, State } from "../core/seams.js";
+import { SHARED_TOOL, sharedKeysOf, type Publication, type SharedFindings } from "../core/shared-findings.js";
+
+const log = logger("agent.publish");
+
+// The worker's ledger, publishing as it writes: a run's claims, what bears on them
+// and its conclusion go to the shared findings under every entity the run is about,
+// marked provisional, the moment they land on the run's own ledger. Another run on
+// the same entity can then read them while both are still working.
+//
+// Publishing never fails a run: the ledger is the record, and a finding that did
+// not reach the shared table is one other runs did not hear about, not one lost.
+// A child run (a judge, a subagent) publishes nothing; its parent's record is the
+// run's.
+const EXCERPT = 400;
+
+export class PublishingLedger<Kinds extends Record<string, unknown> = Record<never, never>> implements State<Kinds> {
+  constructor(
+    private readonly inner: State<Kinds>,
+    private readonly shared: SharedFindings,
+  ) {}
+
+  latestSeq(runId: string): Promise<number | null> {
+    return this.inner.latestSeq(runId);
+  }
+
+  terminal(runId: string): Promise<TerminalPayload | null> {
+    return this.inner.terminal(runId);
+  }
+
+  read(runId: string, opts?: ReadOptions): Promise<AgentEvent<Kinds>[]> {
+    return this.inner.read(runId, opts);
+  }
+
+  async append(runId: string, events: readonly NewEvent<Kinds>[]): Promise<number> {
+    const next = await this.inner.append(runId, events);
+    if (events.some((event) => PUBLISHED.has(event.kind))) {
+      await this.publish(runId, events.length, next).catch((error: unknown) =>
+        log.warn("could not publish to the shared findings", { run_id: runId, ...errorFields(error) }),
+      );
+    }
+    return next;
+  }
+
+  private async publish(runId: string, count: number, next: number): Promise<void> {
+    const held = (await this.inner.read(runId)) as readonly { kind: string; seq: number; run_kind: string; payload: unknown }[];
+    const opened = held.find((event) => event.kind === "run");
+    if (opened === undefined || opened.run_kind === "subagent") return;
+    const keys = sharedKeysOf(held, entityKeysOf(opened.payload as RunPayload));
+    if (keys.length === 0) return;
+
+    const written = held.filter((event) => event.seq >= next - count && event.seq < next && PUBLISHED.has(event.kind));
+    const claims = new Map<string, string>();
+    for (const event of held) {
+      if (event.kind === "hypothesis") {
+        const claim = event.payload as HypothesisPayload;
+        claims.set(claim.hypothesis_id, claim.statement);
+      }
+    }
+    const calls = new Map(held.filter((event) => event.kind === "call").map((event) => [(event.payload as CallPayload).ref, event.payload as CallPayload]));
+
+    const rows: Publication[] = written.flatMap((event): Publication[] => {
+      const base = { entity_keys: keys, run_id: runId, run_kind: opened.run_kind, source_seq: event.seq };
+      if (event.kind === "hypothesis") {
+        const claim = event.payload as HypothesisPayload;
+        return [{ ...base, kind: "claim", statement: claim.statement, detail: { claim_id: claim.hypothesis_id, status: claim.status }, attacker_influenceable: false, derived_from: [] }];
+      }
+      if (event.kind === "link") {
+        const link = event.payload as LinkPayload;
+        const call = calls.get(link.evidence_id);
+        const from = call?.tool === SHARED_TOOL ? findingIdsIn(call.result) : [];
+        const claim = claims.get(link.hypothesis_id) ?? link.hypothesis_id;
+        return [
+          {
+            ...base,
+            kind: "observation",
+            statement: `${link.relation} "${claim}"${call === undefined ? "" : `, from ${call.tool}`}`,
+            detail: {
+              claim_id: link.hypothesis_id,
+              relation: link.relation,
+              ref: link.evidence_id,
+              ...(call === undefined ? {} : { tool: call.tool, arguments: call.arguments.slice(0, EXCERPT), excerpt: call.result.slice(0, EXCERPT) }),
+            },
+            // A tool's result is text from outside, which an attacker may have written.
+            attacker_influenceable: call !== undefined,
+            derived_from: from,
+          },
+        ];
+      }
+      const conclusion = event.payload as ConclusionPayload;
+      const value = conclusion.value;
+      const summary = typeof value["summary"] === "string" ? value["summary"] : typeof value["text"] === "string" ? value["text"] : JSON.stringify(value).slice(0, EXCERPT);
+      return [{ ...base, kind: "conclusion", statement: summary, detail: { answer: value, plugin: conclusion.plugin }, attacker_influenceable: false, derived_from: [] }];
+    });
+    if (rows.length > 0) await this.shared.publish(rows);
+  }
+}
+
+const PUBLISHED = new Set(["hypothesis", "link", "conclusion"]);
+
+// What the run is about when it journaled no recall: the keys its spec opened on,
+// and the subjects a person named for its claims. A run that recalled says which
+// keys it read on, normalised, and those are the ones the kernel reads updates by.
+export function entityKeysOf(run: RunPayload): string[] {
+  const sections = ((run.spec as { sections?: Record<string, unknown> } | undefined)?.sections ?? {}) as Record<string, unknown>;
+  const keys = new Set<string>();
+  for (const key of Array.isArray(sections["recall_keys"]) ? sections["recall_keys"] : []) if (typeof key === "string" && key !== "") keys.add(key);
+  const subjects = sections["operator_hypothesis_subjects"];
+  if (subjects !== null && typeof subjects === "object") {
+    for (const list of Object.values(subjects as Record<string, unknown>)) {
+      for (const key of Array.isArray(list) ? list : []) if (typeof key === "string" && key !== "") keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
+
+// The finding ids a read of the shared findings returned, from its journaled text.
+function findingIdsIn(text: string): string[] {
+  return [...new Set([...text.matchAll(/"finding_id":\s*"([0-9a-f-]{36})"/g)].map((match) => match[1] as string))];
+}

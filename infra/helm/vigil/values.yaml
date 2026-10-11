@@ -432,6 +432,7 @@ dbInit:
     - 39_case_findings_finding_index.sql
     - 40_drop_custom_workflow_graph_layout.sql
     - 41_agent_run_leases_lane.sql
+    - 42_entity_findings.sql
   resources:
     requests:
       cpu: 50m
@@ -783,6 +784,10 @@ config:
   VIGIL_RUN_CONCURRENCY: "4"
   VIGIL_HUMAN_RUN_CONCURRENCY: "1"
   VIGIL_PROVIDER_RETRY_MS: "60000"
+  # Findings shared between runs on the same entities (docs/agent-fleet.md): "on"
+  # publishes every run's record as it is written and lets runs read others'.
+  VIGIL_SHARED_FINDINGS: "off"
+  VIGIL_SHARED_FINDINGS_DAYS: "7"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
   ORCHESTRATOR_DRY_RUN: "false"
