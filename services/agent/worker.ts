@@ -62,7 +62,8 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
   const turns = job.request.iterations;
   // Only ever tightens: a caller may ask to be asked, never to skip a declared gate.
   const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
-  const tighten = (spec: RunSpec): RunSpec =>
+  const tighten = (spec: RunSpec): RunSpec => leanModel(job, tightened(spec));
+  const tightened = (spec: RunSpec): RunSpec =>
     withOverrides(
       {
         ...spec,
@@ -72,6 +73,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
           ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
           ...(plugin === null ? {} : { plugin }),
+          ...(job.request.tier === undefined ? {} : { tier: job.request.tier }),
           ...(Object.keys(gate).length === 0
             ? {}
             : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),
@@ -155,6 +157,20 @@ function defaultResolver(): PlaybookResolver {
     url: process.env["VIGIL_PLAYBOOKS_URL"] ?? "http://localhost:6987/internal/playbooks",
     token: internalToken(),
   });
+}
+
+// A lean run takes the deployment's lean model when it names one
+// (VIGIL_FLEET_LEAN_MODEL); otherwise the workflow's own.
+function leanModel(job: StartJob, spec: RunSpec): RunSpec {
+  const model = process.env["VIGIL_FLEET_LEAN_MODEL"] ?? "";
+  return job.request.tier === "lean" && model.trim() !== "" ? { ...spec, model: model.trim() } : spec;
+}
+
+// The share of the fleet's tighter cap past which automated runs start lean
+// (VIGIL_FLEET_LEAN_AT, 0-1, default 0.8; 0 turns it off).
+function leanAt(): number {
+  const raw = Number(process.env["VIGIL_FLEET_LEAN_AT"] ?? 0.8);
+  return Number.isFinite(raw) && raw > 0 ? raw : Number.POSITIVE_INFINITY;
 }
 
 function pluginOf(job: StartJob): string | null {
@@ -703,6 +719,11 @@ export function startWorker(build: HarnessFactory = harnessFor, budget: FleetBud
             log.info("run held for the fleet budget", { run_id: data.run_id, reason: admission.reason, retry_in_ms: delay });
             await job.moveToDelayed(Date.now() + delay, token);
             throw new DelayedError();
+          }
+          // Money running short: work still starts, on the cheaper tier.
+          if ((admission.used ?? 0) >= leanAt()) {
+            data.request = { ...data.request, tier: "lean" };
+            log.info("run admitted lean", { run_id: data.run_id, budget_used: admission.used });
           }
         }
         try {

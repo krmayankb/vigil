@@ -60,6 +60,8 @@ OTHER_CONSUMERS = {
     # composed from a prefix in core/fleet-gate.ts, so no literal names them.
     "VIGIL_FLEET_EXPECTED_RUN_USD": "agent core/fleet-budget.ts",
     "VIGIL_FLEET_BUDGET_SCOPES": "agent core/fleet-budget.ts",
+    "VIGIL_FLEET_LEAN_AT": "agent worker.ts",
+    "VIGIL_FLEET_LEAN_MODEL": "agent worker.ts",
     "VIGIL_SHARED_FINDINGS": "agent worker.ts",
     "VIGIL_SHARED_FINDINGS_DAYS": "agent ledger/shared-findings.ts",
     "VIGIL_HUMAN_RUN_CONCURRENCY": "agent worker.ts",

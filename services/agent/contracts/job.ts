@@ -65,6 +65,10 @@ export interface StartRequest {
   // Whether a person approves the hypotheses before the hunt spends anything. The policy
   // defaults to auto, so a headless run advances with nobody to ask.
   approve_hypotheses?: boolean;
+  // Set by the worker, never by a caller: the fleet's budget was nearly spoken for
+  // when this run was admitted, so it runs lean -- half the turns, no hand-offs, and
+  // the deployment's lean model if it names one. Journaled on the run's spec.
+  tier?: "lean";
 }
 
 // A resume carries no request, so a resume path that read one would not compile.

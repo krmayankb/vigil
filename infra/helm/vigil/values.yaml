@@ -783,6 +783,10 @@ config:
   # "on" holds workflows to their own caps (SystemConfig workflows.budgets) even
   # with no fleet cap set.
   VIGIL_FLEET_BUDGET_SCOPES: "off"
+  # Past this share of the tighter fleet cap, automated runs start lean: half the
+  # turns, no hand-offs, and VIGIL_FLEET_LEAN_MODEL if set. "0" turns it off.
+  VIGIL_FLEET_LEAN_AT: "0.8"
+  VIGIL_FLEET_LEAN_MODEL: ""
   VIGIL_LLM_FLEET_CONCURRENCY: "0"
   VIGIL_LLM_FLEET_RPM: "0"
   VIGIL_LLM_FLEET_TPM: "0"

@@ -36,7 +36,9 @@ export interface BudgetScope {
   daily?: number | null;
 }
 
-export type Admission = { admitted: true } | { admitted: false; retryInMs: number; reason: string };
+// used: how much of the tighter fleet cap is spoken for once this run is admitted,
+// 0 to 1; absent where no cap is set.
+export type Admission = { admitted: true; used?: number } | { admitted: false; retryInMs: number; reason: string };
 
 export interface FleetBudget {
   admit(runId: string, kind: string, scope?: BudgetScope | null): Promise<Admission>;
@@ -68,7 +70,7 @@ for _, gone in ipairs(redis.call('ZRANGEBYSCORE', expiry, '-inf', now)) do
   local was = redis.call('HGET', scopes, gone)
   if was then redis.call('HDEL', 'vigil:budget:held:' .. was, gone); redis.call('HDEL', scopes, gone) end
 end
-if redis.call('HEXISTS', held, run) == 1 then return {0, '0'} end
+if redis.call('HEXISTS', held, run) == 1 then return {0, '0', '0'} end
 local want = tonumber(redis.call('GET', expect) or fallback)
 local function sum(key)
   local total = 0
@@ -87,7 +89,11 @@ if scope ~= '' then
 end
 redis.call('HSET', held, run, want)
 redis.call('ZADD', expiry, now + hold, run)
-return {0, tostring(want)}
+-- How much of the tighter fleet cap is now spoken for, this run included.
+local used = 0
+if hourCap > 0 then used = math.max(used, (tonumber(redis.call('GET', hour) or '0') + outstanding + want) / hourCap) end
+if dayCap > 0 then used = math.max(used, (tonumber(redis.call('GET', day) or '0') + outstanding + want) / dayCap) end
+return {0, tostring(want), tostring(used)}
 `;
 
 // KEYS: fleet held, fleet expiry, fleet hour, fleet day, spent, run-to-scope.
@@ -168,7 +174,7 @@ export class RedisFleetBudget implements FleetBudget {
     const w = windows(at);
     const name = scope?.scope ?? "";
     try {
-      const [wait, detail] = (await this.redis.eval(
+      const raw = (await this.redis.eval(
         ADMIT,
         9,
         `${K}:held`,
@@ -191,8 +197,12 @@ export class RedisFleetBudget implements FleetBudget {
         name,
         scope?.hourly ?? 0,
         scope?.daily ?? 0,
-      )) as [number, string];
-      if (Number(wait) === 0) return { admitted: true };
+      )) as [number, string, string?];
+      const [wait, detail] = raw;
+      if (Number(wait) === 0) {
+        const used = Number(raw[2] ?? 0);
+        return used > 0 ? { admitted: true, used } : { admitted: true };
+      }
       return { admitted: false, retryInMs: Number(wait), reason: `the ${detail} budget is spoken for` };
     } catch (error) {
       this.unreachable(error);

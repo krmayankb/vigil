@@ -60,6 +60,14 @@ budget never closes an alert: work waits, or a run that reaches its own budget
 parks or ends marked as cut short. Each run's own budget (`max_cost_usd`) and the
 gateway's virtual key still apply.
 
+## When money runs short
+
+Past `VIGIL_FLEET_LEAN_AT` (default 0.8) of the tighter fleet cap, an automated
+run is still admitted, but lean: half its plugin's turns, no hand-offs to other
+plugins, and `VIGIL_FLEET_LEAN_MODEL` if the deployment names one. The run's spec
+records `tier: lean`, so the console and its replay show why it ran short. A
+person's run is never lean. `0` turns this off.
+
 ## Findings shared between runs
 
 With `VIGIL_SHARED_FINDINGS=on` (default off), every run publishes its record to the

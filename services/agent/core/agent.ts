@@ -668,7 +668,9 @@ function turnFor(
 ): TurnConfig {
   const { spec, plugin } = options;
   const structured = isStructured(plugin.conclusion) ? plugin.conclusion : null;
-  const limit = allowance ?? plugin.max_turns ?? spec.runtime.max_turns;
+  // A lean run (the fleet's budget nearly spoken for at its start) takes half.
+  const full = allowance ?? plugin.max_turns ?? spec.runtime.max_turns;
+  const limit = isLean(spec) ? Math.max(1, Math.ceil(full / 2)) : full;
   return {
     run_id: options.run_id,
     run_kind: options.run_kind,
@@ -691,6 +693,10 @@ function turnFor(
     ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
     ...(signal === undefined ? {} : { signal }),
   };
+}
+
+export function isLean(spec: RunSpec): boolean {
+  return spec.sections["tier"] === "lean";
 }
 
 // Told only to a run that holds the tool, so a run without one is not sent looking.
