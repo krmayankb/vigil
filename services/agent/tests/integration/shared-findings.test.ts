@@ -99,3 +99,21 @@ describe("when a finding happened, beside when it was shared", () => {
     expect(Date.parse(read!.recorded_at)).toBeGreaterThan(Date.parse(read!.observed_at!));
   });
 });
+
+describe("an entity many runs have worked", () => {
+  it("is summed up when one read cannot show it all", async () => {
+    const host = entity();
+    const conclusion = (run: string, source: number, disposition: string): Publication => ({ ...finding([host], run, source), kind: "conclusion", detail: { answer: { disposition } } });
+    const runs = Array.from({ length: 4 }, () => randomUUID());
+    await shared.publish([conclusion(runs[0]!, 1, "malicious"), conclusion(runs[1]!, 1, "malicious"), conclusion(runs[2]!, 1, "benign"), finding([host], runs[3]!, 1)]);
+    await pool.query("UPDATE entity_findings SET status = 'superseded' WHERE entity_key = $1 AND run_id = $2", [host, runs[2]]);
+
+    const read = await shared.since([host], {}, randomUUID(), 2);
+    expect(read.findings).toHaveLength(2);
+    expect(read.omitted).toBe(2);
+    expect(read.digest?.[host]).toEqual({ runs: 4, standing: { malicious: 2 }, superseded: 1, retractions: 0 });
+
+    // Everything fits: no digest to read.
+    expect((await shared.since([host], {}, randomUUID(), 20)).digest).toBeUndefined();
+  });
+});

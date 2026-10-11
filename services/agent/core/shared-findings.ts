@@ -54,6 +54,17 @@ export interface SharedUpdates {
   findings: SharedFinding[];
   omitted: number;
   latest: Record<string, number>;
+  // Set when more matched than one read shows: the whole, counted, per entity.
+  digest?: Record<string, EntityDigest>;
+}
+
+// An entity many runs have worked, in one look: how many, how the conclusions
+// that still stand split by what they answered, and how many were overturned.
+export interface EntityDigest {
+  runs: number;
+  standing: Record<string, number>;
+  superseded: number;
+  retractions: number;
 }
 
 export interface SharedFindings {
