@@ -148,3 +148,21 @@ Before indexes. At the top row a single Postgres is comfortable; at the bottom
 the ledger wants partitioning by month so retention drops partitions rather than
 deleting rows, and memory wants its own retention decision. A week-long soak on a
 machine that does not pause should replace these with measurements.
+
+## 1,000 at once, 2026-10-11
+
+`c1000`: 1,000 investigate runs enqueued together on 4 workers × 250, model
+limiter 250 per worker, pg pool 20, stub model at 3s a call.
+
+| | |
+|---|---|
+| Completed | 1,000 / 1,000, no failures, lost runs or stuck leases |
+| Peak | 1,000 runs active, 566 model calls in flight, 83 Postgres connections |
+| Wall time · throughput | 51s · 2,259 runs/min |
+| Queue wait p50 / max | 2.1s / 4.6s |
+| Run time p50 / p95 | 25.7s / 32.4s (about 12s unloaded) |
+| Peak CPU | Postgres 838% (every core), workers 179% |
+
+The agent layer holds 1,000 concurrent runs; Postgres on the same 8 CPUs is what
+slows them, doubling run time. A deployment at this size wants Postgres on its own
+host and a provider quota for roughly 550 model calls in flight.
