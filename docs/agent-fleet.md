@@ -85,6 +85,19 @@ Cost, measured on the soak's worst case (every run on the same host and IP, so
 every run finds unread findings): one more model call per run (3.3 to 4.3) and
 about 40% more spend. A run on entities nobody else is working pays nothing.
 
+## Handing work to another plugin
+
+A plugin may list work it hands off, in its plugin.yaml under `delegates`: a verb,
+the plugin that does it, and the share of the run's remaining budget it may spend
+(default a quarter). Each verb is a tool. Calling it runs that plugin as a child run
+on its own ledger, linked to the parent both ways, and answers with the child's
+conclusion. The child's model calls are billed on the parent's ledger, so the
+parent's run budget, its cost on the console and the fleet budget all count them. A
+question the child raises parks the parent on the same question; once answered, the
+agent calls the verb again and the child goes on. Several hand-offs in one turn run
+at once. One level only. No shipped plugin declares delegates yet; the format and
+rules are in `services/agent/plugins/README.md`.
+
 ## The daemon
 
 | Setting | Default | Meaning |

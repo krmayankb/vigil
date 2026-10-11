@@ -103,3 +103,15 @@ finds other runs' findings unread when it concludes. 2 × 50, 300 runs.
 p3e: 387 runs/min, run time p50 15.4s, 40 events per run; every run met exactly
 one refusal and concluded on its next try. On real workloads the extra call is paid
 only when another run has published on the same entities meanwhile.
+
+## Phase 4: one run path for every plugin, 2026-10-11
+
+| Run | Code | Result |
+|---|---|---|
+| p4-single-path | Phase 4 | 300/300 ended; 3.1 model calls and $0.034 per run, as before. 11 ended `wall_exhausted` after a stall of about 17 minutes |
+| p3-ab | Phase 3, same settings | The same stall: 93 runs done in 53s, then 6 more in the next 470s, then the rest in seconds |
+
+The stall is this laptop's, not the code's: every one of the 100 active runs stops
+at once mid tool call and resumes together, on both the old code and the new. It is
+the same stall p3b hit. A soak on a machine that does not pause is needed before
+any throughput number from here is trusted.
