@@ -56,9 +56,15 @@ each belongs. Kept current as phases land; remove an item when it ships.
   one more model call per run, about 40% more spend (`services/agent/soak/README.md`).
   If that matters on real load, gate the refusal on how many findings are unread or
   how far the run has gone.
-- **Off by default, and not yet evaluated with a real model.** The plan's check --
-  eval cases where two runs share an entity, comparing verdicts and cost with
-  sharing on and off -- needs new labelled cases and a model budget.
+- **A conclusion is shared before the guard rules on it.** Found by the pairs eval
+  (`services/agent/eval/pairs.ts`, report in `eval/results/pairs-report.md`): a run
+  fooled by a planted approval concluded benign, that benign was shared, and the next
+  run on the host leaned on it; only its own guard held it. Publish the disposition
+  that stood, after review, and mark a conclusion that rests on another run's finding.
+  Fix before turning sharing on.
+- **Evaluated once, on synthetic pairs.** Sharing on 15/20 correct vs off 9/20, no
+  missed attacks either way, two false alarms avoided, +20% cost per run (Gemini 2.5
+  Pro, 2 repetitions). Direction, not rates.
 - **The distil does not promote or retract provisional findings yet.** Every row
   stays provisional; reads skip rows older than `VIGIL_SHARED_FINDINGS_DAYS`.
   Phase 5, with event time beside record time and contradictions kept.
