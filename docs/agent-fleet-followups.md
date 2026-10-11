@@ -128,6 +128,9 @@ each belongs. Kept current as phases land; remove an item when it ships.
   graded as telemetry.
 - **The lean tier is all-or-nothing** at one threshold; no gradation, and no
   per-workflow say in whether it may run lean.
+- **An answer whose verdict contradicts its own summary** (one false alarm in the
+  final eval: disposition malicious, summary "no compromise occurred"). A
+  refuse-once consistency check at conclude would catch it; not built.
 - **A second flaky test**: `tests/integration/hunt-run.test.ts` ("hands a run back
   on a lost lease") failed once in a full run and passed alone and in later runs.
 
