@@ -86,9 +86,16 @@ DISTIL_MAPPING_VERSION = 2
 # absence brings the investigation back next tick.
 SUPPORTED_SCHEMA_VERSION = 2
 
-# Only hunts are distilled today. A Case closure writes its own Verdict from the
-# Case, not from a ledger, and no other run kind concludes anything.
-DISTILLED_RUN_KINDS: Tuple[str, ...] = ("hunt",)
+# The run kinds whose terminals are distilled. A hunt files its own investigation;
+# every other kernel run that concludes files one of kind ``run``, keyed by its run
+# id, with its provenance on every row. A Case closure writes its own Verdict from
+# the Case, not from a ledger.
+DISTILLED_RUN_KINDS: Tuple[str, ...] = ("hunt", "investigate", "root_cause")
+
+
+def investigation_kind_of(run_kind: str) -> InvestigationKind:
+    """The memory kind a run of this kind files under."""
+    return InvestigationKind.HUNT if run_kind == "hunt" else InvestigationKind.RUN
 
 DEFAULT_BATCH = 25
 
@@ -150,13 +157,13 @@ BUDGET_TERMINATED = "budget_terminated"
 # the later conclusions re-derive -- the same comparison, against the same
 # column, that the marker makes.
 _CANDIDATES = text("""
-    SELECT DISTINCT ON (e.run_id) e.run_id AS run_id, e.seq AS seq
+    SELECT DISTINCT ON (e.run_id) e.run_id AS run_id, e.seq AS seq, e.run_kind AS run_kind
     FROM agent_events e
     LEFT JOIN episodic_distil_markers m
            ON m.origin_run_ids @> ARRAY[e.run_id]
           AND m.distil_version = :version
     LEFT JOIN episodic_distil_failures f
-           ON f.investigation_kind = 'hunt'
+           ON f.investigation_kind = CASE WHEN e.run_kind = 'hunt' THEN 'hunt' ELSE 'run' END
           AND f.failure_key = e.run_id::text
           AND f.distil_version = :version
           AND f.origin_seq >= e.seq
@@ -178,6 +185,7 @@ class Terminal:
 
     run_id: uuid.UUID
     seq: int
+    run_kind: str = "hunt"
 
 
 @dataclass(frozen=True)
@@ -191,6 +199,10 @@ class Origin:
     run_id: uuid.UUID
     seq: int
     covered: Sequence[uuid.UUID]
+
+
+# The kinds that are run, and so name the terminal they came from.
+_RUN_BACKED = frozenset({InvestigationKind.HUNT, InvestigationKind.RUN})
 
 
 @dataclass(frozen=True)
@@ -220,12 +232,12 @@ class FailureKey:
         later terminal supersedes the failure, so a hunt missing one is a run
         that could never be rescued by concluding again.
         """
-        if self.kind is InvestigationKind.HUNT and self.seq is None:
+        if self.kind in _RUN_BACKED and self.seq is None:
             raise ValueError(
-                "a hunt failure key must name the terminal it failed on, "
+                f"a {self.kind.value} failure key must name the terminal it failed on, "
                 "because the poll compares it against later terminals"
             )
-        if self.kind is not InvestigationKind.HUNT and self.seq is not None:
+        if self.kind not in _RUN_BACKED and self.seq is not None:
             raise ValueError(
                 f"a {self.kind.value} failure key cannot carry seq={self.seq!r}: "
                 "only a hunt has a terminal to name"
@@ -234,7 +246,7 @@ class FailureKey:
     @classmethod
     def of(cls, terminal: Terminal) -> "FailureKey":
         """The key one terminal is recorded under."""
-        return cls(InvestigationKind.HUNT, str(terminal.run_id), terminal.seq)
+        return cls(investigation_kind_of(terminal.run_kind), str(terminal.run_id), terminal.seq)
 
 
 @dataclass(frozen=True)
@@ -249,6 +261,21 @@ class Concluded:
     payload: Mapping[str, Any]
     investigation_id: str
     concluded_at: datetime
+    kind: InvestigationKind = InvestigationKind.HUNT
+
+    def provenance(self, conclusion: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        """How a row came to be: the run's, then the conclusion's own, if any.
+
+        Carried onto every row so recall can be tuned on it later. A hunt's
+        payload carries none, and its rows say only that they are a hunt's.
+        """
+        run = self.payload.get("provenance")
+        own = (conclusion or {}).get("provenance")
+        return {
+            "investigation_kind": self.kind.value,
+            **(run if isinstance(run, Mapping) else {}),
+            **(own if isinstance(own, Mapping) else {}),
+        }
 
 
 class DistilRefused(RuntimeError):
@@ -326,7 +353,9 @@ def _outcome_of(status: str) -> Optional[VerdictOutcome]:
 
 
 def _sources_of(
-    conclusion: Mapping[str, Any], investigation_id: str
+    conclusion: Mapping[str, Any],
+    investigation_id: str,
+    kind: InvestigationKind = InvestigationKind.HUNT,
 ) -> List[Dict[str, str]]:
     """Per-source Stance and stamped Source Tier.
 
@@ -357,7 +386,7 @@ def _sources_of(
         if not system or system in seen:
             continue
         seen.add(system)
-        tier = resolve_source_tier(system, TierKind.HUNT)
+        tier = resolve_source_tier(system, TierKind(kind.value))
         if tier is SourceTier.NOT_EVIDENCE:
             logger.warning(
                 "Distil: %s cites %r on hypothesis %s, which is not evidence",
@@ -403,7 +432,7 @@ def _sighting_rows(concluded: Concluded) -> List[Dict[str, Any]]:
         rows.append(
             {
                 "entity_key": key,
-                "investigation_kind": InvestigationKind.HUNT.value,
+                "investigation_kind": concluded.kind.value,
                 "investigation_id": investigation_id,
                 "source_system": str(sighting.get("source_system", "")),
                 "hit_count": hits,
@@ -414,6 +443,7 @@ def _sighting_rows(concluded: Concluded) -> List[Dict[str, Any]]:
                 "first_seen": min(first, last),
                 "last_seen": max(first, last),
                 "concluded_at": concluded.concluded_at,
+                "provenance": concluded.provenance(),
             }
         )
     return rows
@@ -455,7 +485,7 @@ def _conclusion_rows(
             disposition = _gap_disposition(status, run_outcome)
             gaps.append(
                 {
-                    "investigation_kind": InvestigationKind.HUNT.value,
+                    "investigation_kind": concluded.kind.value,
                     "investigation_id": investigation_id,
                     "hypothesis_id": hypothesis_id,
                     "statement": statement,
@@ -463,6 +493,7 @@ def _conclusion_rows(
                     "reason": rationale or _GAP_REASONS[disposition],
                     "subject_entities": subjects,
                     "concluded_at": concluded.concluded_at,
+                    "provenance": concluded.provenance(conclusion),
                 }
             )
             continue
@@ -472,7 +503,7 @@ def _conclusion_rows(
         verdicts.append(
             {
                 "row": {
-                    "investigation_kind": InvestigationKind.HUNT.value,
+                    "investigation_kind": concluded.kind.value,
                     "investigation_id": investigation_id,
                     "hypothesis_id": hypothesis_id,
                     "statement": statement,
@@ -494,8 +525,9 @@ def _conclusion_rows(
                         else WindowSource.ASSERTED.value
                     ),
                     "concluded_at": concluded.concluded_at,
+                    "provenance": concluded.provenance(conclusion),
                 },
-                "sources": _sources_of(conclusion, investigation_id),
+                "sources": _sources_of(conclusion, investigation_id, concluded.kind),
             }
         )
 
@@ -548,7 +580,17 @@ def _accept(terminal: Terminal, payload: Mapping[str, Any]) -> Concluded:
             f"{terminal.run_id} has not concluded, so there is nothing to distil"
         )
 
-    return Concluded(payload, investigation_id, concluded_at)
+    # Which kind of investigation this files under is the run's, not the payload's
+    # to choose: a payload that names another is refused rather than filed there.
+    expected = investigation_kind_of(terminal.run_kind)
+    named = str(payload.get("investigation_kind") or expected.value)
+    if named != expected.value:
+        raise DistilRefused(
+            f"{terminal.run_id} is a {terminal.run_kind} run but its payload "
+            f"files under {named!r}; it files under {expected.value!r}"
+        )
+
+    return Concluded(payload, investigation_id, concluded_at, expected)
 
 
 def _superseded_by(
@@ -666,7 +708,7 @@ def write_distil(
     clear_failure(session, FailureKey.of(terminal))
 
     concluded = _accept(terminal, payload)
-    kind = InvestigationKind.HUNT
+    kind = concluded.kind
 
     marker = session.get(EpisodicDistilMarker, (kind.value, concluded.investigation_id))
     # origin_run_id included, so the covered set is what the poll needs on its own.
@@ -779,7 +821,7 @@ def pending(session: Session, limit: int = DEFAULT_BATCH) -> List[Terminal]:
             "limit": limit,
         },
     ).all()
-    return [Terminal(uuid.UUID(str(row.run_id)), int(row.seq)) for row in rows]
+    return [Terminal(uuid.UUID(str(row.run_id)), int(row.seq), str(row.run_kind)) for row in rows]
 
 
 async def distil_once(limit: int = DEFAULT_BATCH) -> Dict[str, int]:

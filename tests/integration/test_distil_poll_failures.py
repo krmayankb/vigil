@@ -41,6 +41,7 @@ DDL = (
     "31_agent_ledger_hash_chain.sql",
     "26_episodic_memory.sql",
     "29_episodic_distil_failures.sql",
+    "44_episodic_runs.sql",
 )
 
 
@@ -82,26 +83,26 @@ def run(engine):
         conn.commit()
 
 
-def terminal(conn, run_id, seq):
+def terminal(conn, run_id, seq, run_kind="hunt"):
     conn.execute(
         text(
             "INSERT INTO agent_events (run_id, seq, run_kind, kind, payload, schema_version)"
-            " VALUES (:r, :s, 'hunt', 'terminal', '{}'::jsonb, 1)"
+            " VALUES (:r, :s, :k, 'terminal', '{}'::jsonb, 1)"
         ),
-        {"r": str(run_id), "s": seq},
+        {"r": str(run_id), "s": seq, "k": run_kind},
     )
 
 
-def refused_at(conn, run_id, seq, version=DISTIL_MAPPING_VERSION):
+def refused_at(conn, run_id, seq, version=DISTIL_MAPPING_VERSION, kind="hunt"):
     """A refusal, which is the failure that waits forever and so hides the most."""
     conn.execute(
         text("""INSERT INTO episodic_distil_failures
                (investigation_kind, failure_key, origin_seq, reason, attempts,
                 last_error, first_failed_at, last_failed_at, next_attempt_at,
                 distil_version)
-               VALUES ('hunt', :k, :s, 'refused', 1, 'no investigation id',
+               VALUES (:kind, :k, :s, 'refused', 1, 'no investigation id',
                        now(), now(), '9999-12-31'::timestamptz, :v)"""),
-        {"k": str(run_id), "s": seq, "v": version},
+        {"k": str(run_id), "s": seq, "v": version, "kind": kind},
     )
 
 
@@ -152,3 +153,37 @@ class TestARefusalHidesOnlyWhatItSaw:
             conn.commit()
 
         assert (str(run), 1) in offered(engine)
+
+
+class TestEveryKernelRunIsOffered:
+    """Memory from every agent run, not only hunts (44_episodic_runs.sql)."""
+
+    def test_an_investigation_terminal_is_offered(self, engine, run):
+        with engine.connect() as conn:
+            terminal(conn, run, 7, run_kind="investigate")
+            conn.commit()
+
+        assert (str(run), 7) in offered(engine)
+
+    def test_its_refusal_is_recorded_under_run_and_hides_it(self, engine, run):
+        with engine.connect() as conn:
+            terminal(conn, run, 7, run_kind="investigate")
+            refused_at(conn, run, 7, kind="run")
+            conn.commit()
+
+        assert (str(run), 7) not in offered(engine)
+
+    def test_a_hunt_refusal_does_not_speak_for_a_run_of_another_kind(self, engine, run):
+        with engine.connect() as conn:
+            terminal(conn, run, 7, run_kind="investigate")
+            refused_at(conn, run, 7, kind="hunt")
+            conn.commit()
+
+        assert (str(run), 7) in offered(engine)
+
+    def test_a_chat_is_never_offered(self, engine, run):
+        with engine.connect() as conn:
+            terminal(conn, run, 7, run_kind="chat")
+            conn.commit()
+
+        assert (str(run), 7) not in offered(engine)

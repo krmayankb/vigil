@@ -434,6 +434,7 @@ dbInit:
     - 41_agent_run_leases_lane.sql
     - 42_entity_findings.sql
     - 43_agent_content.sql
+    - 44_episodic_runs.sql
   resources:
     requests:
       cpu: 50m

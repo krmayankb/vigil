@@ -50,7 +50,7 @@ export type Stance = (typeof STANCES)[number];
 
 // Keyed by kind and id, never run_id: a run-keyed schema cannot represent the
 // Case-authored Verdicts the writer split requires. Nothing writes `analyst` yet.
-export const INVESTIGATION_KINDS = ["hunt", "case", "analyst"] as const;
+export const INVESTIGATION_KINDS = ["hunt", "case", "analyst", "run"] as const;
 export type InvestigationKind = (typeof INVESTIGATION_KINDS)[number];
 
 // handed_off is terminal for the hunt and not an ending of the claim, so it ranks
@@ -94,6 +94,10 @@ export interface RecalledProvenance {
   readonly investigation_kind: InvestigationKind;
   readonly investigation_id: string;
   readonly concluded_at: string;
+  // How the row came to be: for an agent run its plugin, how it ended, what its
+  // review said, the answer it gave against the one that stood. Empty on a row
+  // written before it existed; optional because a recall journaled then lacks it.
+  readonly provenance?: Readonly<Record<string, unknown>>;
 }
 
 // One row per entity, investigation and source, so growth tracks hunts and not

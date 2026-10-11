@@ -146,17 +146,18 @@ _ANY_SUBJECT = "{alias}.subject_entities && CAST(:keys AS text[])"
 _SIGHTING_COLUMNS = (
     "r.id, r.entity_key, r.investigation_kind, r.investigation_id, "
     "r.source_system, r.hit_count, r.attacker_influenceable, "
-    "r.first_seen, r.last_seen, r.concluded_at"
+    "r.first_seen, r.last_seen, r.concluded_at, r.provenance"
 )
 _VERDICT_COLUMNS = (
     "r.id, r.investigation_kind, r.investigation_id, r.hypothesis_id, "
     "r.statement, r.outcome, r.rationale, r.subject_entities, "
     "r.attacker_influenceable_only, r.trust, r.first_seen, r.last_seen, "
-    "r.window_source, r.concluded_at"
+    "r.window_source, r.concluded_at, r.provenance"
 )
 _GAP_COLUMNS = (
     "r.id, r.investigation_kind, r.investigation_id, r.hypothesis_id, "
-    "r.statement, r.disposition, r.reason, r.subject_entities, r.concluded_at"
+    "r.statement, r.disposition, r.reason, r.subject_entities, r.concluded_at, "
+    "r.provenance"
 )
 
 _QUERIES = {
@@ -236,6 +237,7 @@ def _provenance(row: Mapping[str, Any]) -> Dict[str, Any]:
         "investigation_kind": row["investigation_kind"],
         "investigation_id": row["investigation_id"],
         "concluded_at": _iso(row["concluded_at"]),
+        "provenance": dict(row["provenance"] or {}),
     }
 
 

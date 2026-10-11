@@ -21,7 +21,7 @@
 -- core/memory/recall_contract.py, and a value added there must be added here.
 
 CREATE TABLE IF NOT EXISTS episodic_distil_failures (
-    investigation_kind text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst')),
+    investigation_kind text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst', 'run')),
     -- A run id for a hunt, a case id for a Case. Text rather than uuid because
     -- one column carries both, and the poll casts the run id to match. Not
     -- called a subject: a subject is an entity a Verdict names (ADR 0016), and
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS episodic_distil_failures (
     PRIMARY KEY (investigation_kind, failure_key),
 
     CONSTRAINT episodic_distil_failures_seq_matches_kind CHECK (
-        (investigation_kind = 'hunt') = (origin_seq IS NOT NULL)
+        (investigation_kind IN ('hunt', 'run')) = (origin_seq IS NOT NULL)
     ),
     CONSTRAINT episodic_distil_failures_window CHECK (first_failed_at <= last_failed_at)
 );

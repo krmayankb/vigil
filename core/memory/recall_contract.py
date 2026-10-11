@@ -53,6 +53,8 @@ class InvestigationKind(str, Enum):
     HUNT = "hunt"
     CASE = "case"
     ANALYST = "analyst"
+    # One agent run of any plugin but the hunt, keyed by its run id.
+    RUN = "run"
 
 
 class VerdictOutcome(str, Enum):
@@ -195,6 +197,8 @@ _PROVENANCE: Tuple[str, ...] = (
     "investigation_kind",
     "investigation_id",
     "concluded_at",
+    # How the row came to be (44_episodic_runs.sql); empty on older rows.
+    "provenance",
 )
 
 # One row per entity, investigation and source, so growth tracks hunts and not

@@ -1586,6 +1586,10 @@
       "data_type": "text",
       "nullable": false
     },
+    "provenance": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
     "reason": {
       "data_type": "text",
       "nullable": false
@@ -1674,6 +1678,10 @@
       "data_type": "timestamp with time zone",
       "nullable": false
     },
+    "provenance": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
     "source_system": {
       "data_type": "text",
       "nullable": false
@@ -1736,6 +1744,10 @@
     },
     "outcome": {
       "data_type": "text",
+      "nullable": false
+    },
+    "provenance": {
+      "data_type": "jsonb",
       "nullable": false
     },
     "rationale": {

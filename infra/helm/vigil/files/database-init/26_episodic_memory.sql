@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS episodic_sightings (
     -- `type:value`, normalised by Python. Only Python writes an Entity Key; the
     -- harness's extractor output arrives as candidate type and value.
     entity_key             text        NOT NULL,
-    investigation_kind     text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst')),
+    investigation_kind     text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst', 'run')),
     investigation_id       text        NOT NULL,
     -- Memory's own column, not a foreign key into either producer: a hunt fills
     -- it from the Ledger's source_system, a Case from its Findings' data_source.
@@ -65,7 +65,7 @@ COMMENT ON TABLE episodic_sightings IS
 -- What an investigation concluded, one row per Hypothesis.
 CREATE TABLE IF NOT EXISTS episodic_verdicts (
     id                          bigserial   PRIMARY KEY,
-    investigation_kind          text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst')),
+    investigation_kind          text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst', 'run')),
     investigation_id            text        NOT NULL,
     -- Stable, because the prose gets re-worded. A Case's is its case id.
     hypothesis_id               text        NOT NULL,
@@ -134,7 +134,7 @@ COMMENT ON TABLE episodic_verdict_sources IS
 -- which is the reason these are not Verdict rows with an empty outcome.
 CREATE TABLE IF NOT EXISTS episodic_gaps (
     id                 bigserial   PRIMARY KEY,
-    investigation_kind text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst')),
+    investigation_kind text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst', 'run')),
     investigation_id   text        NOT NULL,
     hypothesis_id      text        NOT NULL,
     statement          text        NOT NULL,
@@ -165,7 +165,7 @@ COMMENT ON TABLE episodic_gaps IS
 -- from the presence of rows: an investigation that concluded nothing writes no
 -- Sightings, no Verdicts and no Gaps, and is still done.
 CREATE TABLE IF NOT EXISTS episodic_distil_markers (
-    investigation_kind text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst')),
+    investigation_kind text        NOT NULL CHECK (investigation_kind IN ('hunt', 'case', 'analyst', 'run')),
     investigation_id   text        NOT NULL,
     -- The terminal these rows were derived from, so a marker can be traced back
     -- to a ledger. Null on a Case, which was closed rather than run.
@@ -196,13 +196,13 @@ CREATE TABLE IF NOT EXISTS episodic_distil_markers (
 
     -- The one place this schema admits a NULL, and it is not an unknown state:
     -- which of the two shapes a marker has follows entirely from its kind, and
-    -- this says so. A hunt marker names the terminal it was derived from; a
+    -- this says so. A hunt or run marker names the terminal it was derived from; a
     -- Case marker cannot, because a Case is closed and never run. Stated as a
     -- CHECK rather than left to the writer so that neither shape can be
     -- half-written -- a hunt marker with no origin is a marker nothing can be
     -- traced back to, and a Case marker carrying one is a lie about a run.
     CONSTRAINT episodic_distil_markers_origin_matches_kind CHECK (
-        (investigation_kind = 'hunt') = (origin_run_id IS NOT NULL)
+        (investigation_kind IN ('hunt', 'run')) = (origin_run_id IS NOT NULL)
         AND (origin_run_id IS NULL) = (origin_seq IS NULL)
     )
 );
@@ -215,7 +215,7 @@ ALTER TABLE episodic_distil_markers
     DROP CONSTRAINT IF EXISTS episodic_distil_markers_origin_matches_kind;
 ALTER TABLE episodic_distil_markers
     ADD CONSTRAINT episodic_distil_markers_origin_matches_kind CHECK (
-        (investigation_kind = 'hunt') = (origin_run_id IS NOT NULL)
+        (investigation_kind IN ('hunt', 'run')) = (origin_run_id IS NOT NULL)
         AND (origin_run_id IS NULL) = (origin_seq IS NULL)
     );
 
