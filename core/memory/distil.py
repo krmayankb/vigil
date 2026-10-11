@@ -59,6 +59,7 @@ from core.memory.recall_contract import (
     WindowSource,
     bounded_prose,
 )
+from core.memory.shared_findings import settle_run
 from core.memory.source_tier import InvestigationKind as TierKind
 from core.memory.source_tier import SourceTier, resolve_source_tier
 from core.storage.models import (
@@ -751,6 +752,8 @@ def write_distil(
             "verdicts": len(verdicts),
             "gaps": len(gaps),
         }
+        # What the run shared while it worked is settled now that memory holds it.
+        settle_run(session, str(terminal.run_id))
 
     write_marker(
         session,
