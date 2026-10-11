@@ -107,6 +107,8 @@ function seedOf(messages: readonly Message[]): number {
 
 function investigateTurn(messages: readonly Message[], tools: readonly string[], benign: boolean): { say: string; calls: Call[] } {
   const results = messages.filter((message) => message.role === "tool").length;
+  // Handed other runs' findings when it tried to conclude, it weighs them and
+  // concludes again: the last branch does, its results being already gathered.
   const has = (name: string) => tools.includes(name);
   if (results === 0) {
     return {
@@ -228,8 +230,8 @@ async function invoke(req: IncomingMessage, res: ServerResponse, options: StubOp
   const tool = String(body["tool"] ?? "");
   if (tool === RECALL_TOOL) {
     stats.recalls += 1;
-    const args = (body["args"] ?? {}) as { keys?: string[] };
-    json(res, 200, { ok: true, rows: [emptyRecall(args.keys ?? [], new Date().toISOString())], rowCount: 1, capped: false, sourceSystem: "memory" });
+    const args = (body["args"] ?? {}) as { entity_keys?: string[] };
+    json(res, 200, { ok: true, rows: [emptyRecall(args.entity_keys ?? [], new Date().toISOString())], rowCount: 1, capped: false, sourceSystem: "memory" });
     return;
   }
   stats.tool_calls += 1;

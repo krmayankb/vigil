@@ -60,6 +60,31 @@ budget never closes an alert: work waits, or a run that reaches its own budget
 parks or ends marked as cut short. Each run's own budget (`max_cost_usd`) and the
 gateway's virtual key still apply.
 
+## Findings shared between runs
+
+With `VIGIL_SHARED_FINDINGS=on` (default off), every run publishes its record to the
+`entity_findings` table (`infra/database/init/42_entity_findings.sql`) the moment it
+writes it: each claim, each link of a result to a claim (with an excerpt of the
+result, marked as text an attacker may have written), and its conclusion. They are
+filed under the entities the run is about -- the keys its memory read reported --
+marked provisional.
+
+A run on the same entities holds a `get_entity_updates` tool that returns what other
+runs published since it last asked, and is told in its prompt that another run's
+finding is a lead to confirm with its own query, never proof. When a run concludes
+while something newer sits unread, the kernel refuses that conclude once, with the
+newest five findings (and how many more there are) in the refusal itself, so the
+run weighs them and concludes again without a separate read; a busy entity cannot
+keep it from finishing. The read and the refusal are on the run's own ledger, so a
+replay serves them as they were. Another run's finding never counts as the
+cited ground of a guarded answer, and a finding built on another run's names it in
+`derived_from`. Findings older than `VIGIL_SHARED_FINDINGS_DAYS` (default 7) are not
+read.
+
+Cost, measured on the soak's worst case (every run on the same host and IP, so
+every run finds unread findings): one more model call per run (3.3 to 4.3) and
+about 40% more spend. A run on entities nobody else is working pays nothing.
+
 ## The daemon
 
 | Setting | Default | Meaning |

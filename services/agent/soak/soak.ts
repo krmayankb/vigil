@@ -113,6 +113,7 @@ function redisConnection(url: string): { host: string; port: number; db: number 
 
 async function reset(pool: pg.Pool, queues: readonly Queue[]): Promise<void> {
   await pool.query("TRUNCATE agent_events, agent_run_leases, agent_directives");
+  await pool.query("TRUNCATE entity_findings").catch(() => undefined);
   for (const queue of queues) await queue.obliterate({ force: true });
 }
 

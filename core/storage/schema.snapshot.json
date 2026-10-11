@@ -1405,6 +1405,60 @@
       "nullable": false
     }
   },
+  "entity_findings": {
+    "attacker_influenceable": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "derived_from": {
+      "data_type": "uuid[]",
+      "nullable": false
+    },
+    "detail": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "entity_key": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "finding_id": {
+      "data_type": "uuid",
+      "nullable": false
+    },
+    "kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "recorded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "run_id": {
+      "data_type": "uuid",
+      "nullable": false
+    },
+    "run_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "seq": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "source_seq": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "statement": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "status": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
   "episodic_distil_failures": {
     "attempts": {
       "data_type": "integer",

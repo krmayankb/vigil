@@ -30,6 +30,7 @@ SCOPED = (
     "infra/database/init/20_agent_directives.sql",
     "infra/database/init/21_agent_run_leases.sql",
     "infra/database/init/41_agent_run_leases_lane.sql",
+    "infra/database/init/42_entity_findings.sql",
     "infra/database/init/31_agent_ledger_hash_chain.sql",
 )
 SKIP = ("node_modules", "package-lock.json", "dist", "__pycache__")
