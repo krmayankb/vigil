@@ -123,6 +123,15 @@ using the same bearer token, and the agent-serve network policy admits KEDA's
 namespace (`networkPolicies.agentServe.kedaNamespaceSelector`). A Redis list count
 would miss prioritised runs, which BullMQ keeps in a sorted set.
 
+
+`GET /metrics` on the same surface (same bearer token) answers in Prometheus'
+text format: `vigil_agent_queue_jobs{lane,state}`, `vigil_agent_runs{state,lane}`
+(running, waiting, due, stalled), `vigil_agent_oldest_waiting_seconds{lane}` (on
+the human lane, how long the oldest person's ask has waited),
+`vigil_fleet_spend_usd{window}` against `vigil_fleet_budget_cap_usd{window}`,
+`vigil_fleet_reserved_usd`, `vigil_fleet_reserved_runs`,
+`vigil_fleet_model_calls_in_flight` and `vigil_fleet_part_up{part}`, which is 0
+for a part that could not be read rather than reporting zeros.
 ## Deploying
 
 Every setting above is in the chart's `config` (`infra/helm/vigil/values.yaml`) and

@@ -29,7 +29,7 @@ import { huntKernelReplay } from "./plugins/hunt/view.js";
 import { rootCauseReplay } from "./plugins/rootcause/replay.js";
 import { Queue } from "bullmq";
 import { RUN_QUEUE, RUN_QUEUE_HUMAN, type RunJob } from "./contracts/job.js";
-import { backlog, fleetStatus } from "./core/fleet-status.js";
+import { backlog, fleetStatus, prometheusOf } from "./core/fleet-status.js";
 
 const log = logger("agent.serve");
 
@@ -322,6 +322,12 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const url = req.url ?? "";
       if (req.method === "POST" && url === CHAT) return openChat(state, req, res, build);
+
+      if (req.method === "GET" && url === "/metrics") {
+        if (fleet === undefined) return refuse(res, 404, "this process does not read the fleet");
+        res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
+        return void res.end(prometheusOf((await fleet.status()) as Record<string, unknown>));
+      }
 
       if (req.method === "GET" && (url === "/fleet" || url === "/fleet/backlog")) {
         if (fleet === undefined) return refuse(res, 404, "this process does not read the fleet");
