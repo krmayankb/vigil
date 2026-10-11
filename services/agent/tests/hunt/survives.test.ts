@@ -20,7 +20,6 @@ function huntSpec(): RunSpec {
   const entry = archFor("hunt");
   return buildSpec(
     { arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") },
-    entry.actions,
   );
 }
 
@@ -52,7 +51,6 @@ async function run(error: () => Error) {
     run_id: "run-dying",
     run_kind: "hunt",
     spec,
-    actions: archFor("hunt").actions,
     queue: new InProcessDirectiveQueue(),
   });
   return { report, terminal: await state.terminal("run-dying"), events: await state.read("run-dying") };

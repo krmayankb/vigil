@@ -53,6 +53,12 @@ guard:                              # optional second look before a guarded answ
 max_turns: 24                       # optional; else the deployment's runtime.max_turns
 record: required                    # off | available (the default) | required
 min_results: 4                      # optional; see below
+delegates:                          # optional; see "Handing work off" below
+  - verb: trace_root_cause          # the tool's name
+    plugin: rootcause               # the plugin that does the work
+    description: Trace how the attacker got in, once you know they did.
+    budget_share: 0.3               # of what this run has left to spend; default 0.25
+    max_turns: 12                   # optional; else the child plugin's own
 ```
 
 `min_results`: a run that stops calling tools with turns left and fewer than this
@@ -72,9 +78,37 @@ answer and the records it cites. The answer stands only if the reviewer upholds
 it over at least one cited ref that is a real call. Otherwise the run ends on the
 fallback. Refs are checked by counting, whatever the reviewer says.
 
+## Handing work off
+
+Each entry under `delegates` becomes a tool, named by its verb, taking a `task`
+and optionally the `entities` it is about. Calling it runs the named plugin as a
+run of its own (`core/delegation.ts`):
+
+- on its own ledger (`run_kind: subagent`), its run event naming the parent and the
+  verb, the parent writing a `child` event when it ends. Its console view is the
+  kernel's own (`agentProjection`) unless its plugin has one;
+- with the kernel's whole loop: its own record, answer, review and declared gaps.
+  It is told only the task, and sees nothing of the parent's transcript;
+- billed on the parent: its model calls are journaled as the parent's `spend`,
+  marked `spent_by` the child, and it may spend only `budget_share` of what the
+  parent had left when it started;
+- parked with its parent: a question the child raises is raised on the parent under
+  the same id. Once answered, the agent calls the verb again with the same
+  arguments, the answer is carried down, and the child goes on where it stopped;
+- at once with the others: several hand-offs in one turn run concurrently;
+- one level deep: a child is never given delegation of its own, and a plugin cannot
+  name itself.
+
+The same task with the same entities is the same child, so a resumed parent never
+starts a second one. `hunt`, `adjudicate`, `compose` and `chat` cannot be handed
+work yet: their hooks are built from what only the worker holds, and they need a
+playbook of their own shape.
+
 ## Hooks
 
-A plugin whose work needs code ships `hooks.ts` and registers it in `index.ts`.
+A plugin whose work needs code ships `hooks.ts` and registers it in `index.ts`, or,
+when its hooks are built from what only the worker holds (the directive queue, the
+console mirror), in `run.ts`, which is also the one way every plugin is run.
 Every hook is optional, and the kernel calls each at a fixed point:
 
 | Hook | When | Used by |
@@ -111,7 +145,11 @@ authored sequence rather than one agent's judgement. Compose's phases use it.
 
 ## Adding one
 
-1. Write `<id>/plugin.yaml` and its skills.
+1. Write `<id>/plugin.yaml`, naming skills from the library. That is a whole plugin:
+   another plugin can hand it work through `delegates`, and its runs read in the
+   kernel's own shape.
 2. If it needs code, write `<id>/hooks.ts` and register it in `index.ts`.
-3. Give its run kind an entry in `plugins/kinds.ts`, and a projection if the console reads it in a shape of its own.
-4. Test it with a scripted model that answers what it is shown. See `tests/hunt/kernel-hunt.test.ts`.
+3. To start it from a workflow as a run kind of its own, give the kind an entry in
+   `plugins/kinds.ts`, and a projection if the console reads it in a shape of its own.
+4. Test it with a scripted model that answers what it is shown. See
+   `tests/core/delegation.test.ts` and `tests/hunt/kernel-hunt.test.ts`.

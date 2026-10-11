@@ -67,7 +67,7 @@ class InMemoryShared implements SharedFindings {
 
 function specOf(): RunSpec {
   const entry = archFor("investigate");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") }, entry.actions);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "case.playbook.yaml"), config: join(FIXTURES, "case.config.yaml") });
   return { ...spec, budgets: { ...spec.budgets, max_calls: 50 } };
 }
 
@@ -146,6 +146,41 @@ describe("findings shared between runs on one entity", () => {
     expect(second.report.status).toBe("completed");
     // What it was handed counts as read.
     expect(watermarksOf(second.calls)).toEqual({ [HOST]: 3 });
+  });
+
+  it("shares a dismissal only as its review let it stand, once the run has ended", async () => {
+    const shared = new InMemoryShared();
+    const ledger = new PublishingLedger(new InProcessState<AgentKinds>(), shared);
+    // Benign, citing a result no claim on the record is linked to: held for review.
+    const done = await run(FIRST, [{ calls: [call("get_finding", { finding_id: "f-1" })] }, { calls: [conclude("benign", ["r1"])] }], shared, ledger);
+    expect(done.report.status).toBe("completed");
+    const [conclusion, ...more] = shared.rows.filter((row) => row.kind === "conclusion");
+    expect(more).toEqual([]);
+    expect((conclusion!.detail["answer"] as Record<string, unknown>)["disposition"]).toBe("needs_review");
+    expect(conclusion!.detail["asked"]).toBe("benign");
+    expect(conclusion!.statement).toContain("its review did not let that stand, and it ended needs_review");
+  });
+
+  it("marks a conclusion that rests on another run's finding, and names the finding", async () => {
+    const shared = new InMemoryShared();
+    await shared.publish([{ entity_keys: [HOST], run_id: FIRST, run_kind: "investigate", source_seq: 9, kind: "conclusion", statement: "ws-17 is malicious", detail: {}, attacker_influenceable: false, derived_from: [] }]);
+    const theirs = shared.rows[0]!.finding_id;
+    const ledger = new PublishingLedger(new InProcessState<AgentKinds>(), shared);
+    await run(
+      SECOND,
+      [
+        { calls: [call(SHARED_TOOL)] },
+        { calls: [call("link_evidence", { links: [{ evidence_id: "r1", statement: "ws-17 is compromised", stance: "supports" }] })] },
+        { calls: [conclude("malicious", ["r1"])] },
+      ],
+      shared,
+      ledger,
+    );
+    const mine = shared.rows.find((row) => row.run_id === SECOND && row.kind === "conclusion")!;
+    expect(mine.detail["rests_on_other_runs"]).toBe(true);
+    expect(mine.derived_from).toEqual([theirs]);
+    expect(mine.attacker_influenceable).toBe(true);
+    expect(mine.statement).toContain("not an independent source");
   });
 
   it("never rests a guarded answer on another run's finding", () => {

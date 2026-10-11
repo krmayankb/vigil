@@ -1,11 +1,10 @@
 import type { RunOutcome } from "../../contracts/events.js";
 import type { Answers } from "../../core/answers.js";
 import type { Announce } from "../../core/checkpoints.js";
-import { runAgent, type AgentKinds, type StopSource } from "../../core/agent.js";
+import type { AgentKinds } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
-import { SpecError, type RunSpec } from "../../core/spec.js";
-import { loadPlugin } from "../index.js";
-import { toolsFrom } from "../../tools/remote.js";
+import type { RunSpec } from "../../core/spec.js";
+import { runPlugin, stopFrom } from "../run.js";
 import type { DirectiveQueue } from "../hunt/ports.js";
 import type { NoticePayload, RootCauseKinds, StepPayload } from "./proof.js";
 
@@ -33,30 +32,17 @@ export interface RootCauseReport {
 // loop, the proof in the plugin's hooks. Kept under this name so every caller and
 // test that drives a trace drives the kernel.
 export async function runRootCause(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<RootCauseReport> {
-  const { run_id, spec } = options;
-  if (spec.roles.lead === undefined) throw new SpecError(`arch ${spec.arch} declares no lead, so it cannot trace a root cause`);
-  const { manifest, hooks } = loadPlugin("rootcause");
-  const report = await runAgent(harness as unknown as Harness<AgentKinds>, {
-    run_id,
-    run_kind: "root_cause",
-    spec,
-    plugin: manifest,
-    ...(hooks === undefined ? {} : { hooks }),
-    tools: toolsFrom(spec.tools),
-    ...(options.started_by === undefined ? {} : { started_by: options.started_by }),
-    ...(options.answers === undefined ? {} : { answers: options.answers }),
-    ...(options.announce === undefined ? {} : { announce: options.announce }),
-    ...(options.queue === undefined ? {} : { stop: stopFrom(options.queue, run_id) }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
+  const report = await runPlugin(
+    "rootcause",
+    harness as unknown as Harness<AgentKinds>,
+    { run_id: options.run_id, run_kind: "root_cause", spec: options.spec, ...(options.started_by === undefined ? {} : { started_by: options.started_by }), ...(options.signal === undefined ? {} : { signal: options.signal }) },
+    {
+      ...(options.queue === undefined ? {} : { queue: options.queue }),
+      ...(options.answers === undefined ? {} : { answers: options.answers }),
+      ...(options.announce === undefined ? {} : { announce: options.announce }),
+    },
+  );
   return { status: report.status, reason: report.reason, pending: report.pending };
 }
 
-export function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
-  return async () => {
-    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
-    if (found === undefined) return null;
-    const { directive_id, actor, kind, text, created_at } = found;
-    return { directive_id, actor, kind, text, created_at };
-  };
-}
+export { stopFrom };

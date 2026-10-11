@@ -7,7 +7,6 @@ import { LeaseRepository } from "../../ledger/leases.js";
 import { advance, resolveSpec, spentOn } from "../../worker.js";
 import { runHunt } from "../../plugins/hunt/workflow.js";
 import { steer } from "../../plugins/hunt/inbox.js";
-import { archFor } from "../../plugins/kinds.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
 import type { RunJob } from "../../contracts/job.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";
@@ -189,7 +188,6 @@ describe("a hunt started through the queue", () => {
       run_id: runId,
       run_kind: "hunt",
       spec,
-      actions: archFor("hunt").actions,
       queue: new InProcessDirectiveQueue(),
       started_by: "test",
       signal: halted,

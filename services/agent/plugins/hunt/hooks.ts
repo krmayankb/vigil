@@ -75,7 +75,6 @@ function adapters(ctx: PluginContext): AdapterOptions {
     spec: ctx.options.spec,
     run_id: ctx.options.run_id,
     run_kind: ctx.options.run_kind,
-    actions: [],
     recall_keys: [],
     ...(ctx.options.signal === undefined ? {} : { signal: ctx.options.signal }),
     // The critic and the narrator are judges, each run on a ledger of its own.

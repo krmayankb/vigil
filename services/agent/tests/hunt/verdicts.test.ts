@@ -278,7 +278,7 @@ describe("the critic as a model call", () => {
 
   function specOf(): RunSpec {
     const entry = archFor("hunt");
-    const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") }, entry.actions, entry.owned);
+    const spec = buildSpec({ arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") }, entry.owned);
     return { ...spec, sections: { ...spec.sections, hypotheses: ["10.0.0.5 is beaconing to 45.77.53.176"] } };
   }
 
@@ -341,7 +341,7 @@ describe("the critic as a model call", () => {
         memory: nullMemory,
         state,
       },
-      { run_id: runId, run_kind: "hunt", spec, actions: [], queue: new InProcessDirectiveQueue() },
+      { run_id: runId, run_kind: "hunt", spec, queue: new InProcessDirectiveQueue() },
     );
     return (await state.read(runId)) as readonly HuntEvent[];
   }

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { archFor } from "../../plugins/kinds.js";
 import { InProcessState } from "../../core/state.js";
 import { recalledNotes, type RecallResult } from "../../contracts/memory.js";
 import { InProcessDirectiveQueue } from "../../plugins/hunt/directives.js";
@@ -29,7 +28,6 @@ async function hunt(asked: Asked = {}) {
     run_id: RUN,
     spec,
     run_kind: "hunt",
-    actions: archFor("hunt").actions,
     queue: new InProcessDirectiveQueue(),
   });
   return { report, memory, events: await state.read(RUN) };

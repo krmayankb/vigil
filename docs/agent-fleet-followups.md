@@ -25,6 +25,9 @@ each belongs. Kept current as phases land; remove an item when it ships.
 - **v1 API runs are always automated.** The v1 contract is frozen, so it has no lane.
 - **A deferred run reads as running.** A run waiting out a provider outage shows as
   running with a reason; a distinct status needs a console change.
+- **The laptop soak stalls.** Every active run pauses at once for 8-17 minutes, on
+  old code and new alike (soak README, Phase 4). Throughput figures need a soak on a
+  machine that does not pause.
 - **The soak leaves out the backend** (run mirroring, approvals), real tool backends
   and real model latency.
 - **Tool limits are concurrency only.** No requests-per-minute limit per tool.
@@ -53,9 +56,16 @@ each belongs. Kept current as phases land; remove an item when it ships.
   one more model call per run, about 40% more spend (`services/agent/soak/README.md`).
   If that matters on real load, gate the refusal on how many findings are unread or
   how far the run has gone.
-- **Off by default, and not yet evaluated with a real model.** The plan's check --
-  eval cases where two runs share an entity, comparing verdicts and cost with
-  sharing on and off -- needs new labelled cases and a model budget.
+- **Evaluated twice, on synthetic pairs** (`services/agent/eval/pairs.ts`, report in
+  `eval/results/pairs-report.md`). After the fixes below: sharing on 17/20 correct vs
+  off 9/20, no missed attacks either way, +30% cost per run (Gemini 2.5 Pro, 2
+  repetitions). Direction, not rates. A larger set and more repetitions before
+  turning it on for real.
+- **Fixed from the first eval:** a conclusion is shared only after its review, as the
+  disposition that stood, and is marked when it rests on other runs' findings.
+- **A run is still fooled by an attacker's note in a command line** (pair 10's first
+  run concluded benign both times; its review held it). Not a sharing problem: worth
+  a case in the main eval.
 - **The distil does not promote or retract provisional findings yet.** Every row
   stays provisional; reads skip rows older than `VIGIL_SHARED_FINDINGS_DAYS`.
   Phase 5, with event time beside record time and contradictions kept.
@@ -73,6 +83,26 @@ each belongs. Kept current as phases land; remove an item when it ships.
   (investigate today). A plugin that answers in prose is told findings exist but not
   stopped.
 - **No partitioning or retention job** on `entity_findings`.
+
+## Phase 4 (plugins and delegation)
+
+- **No shipped plugin delegates yet, and no eval has run with delegation on.** The
+  plan's check -- verdicts and cost with and without a hand-off, on a real model --
+  needs a plugin that delegates (investigate handing off a root-cause trace is the
+  likely first) and labelled cases.
+- **hunt, adjudicate, compose and chat cannot be handed work.** Their hooks are built
+  from what only the worker holds, and they need a playbook of their own shape.
+- **A child parked on a question waits for the parent's agent to call the verb
+  again.** If the agent does something else instead, the child stays parked and
+  unlinked. The kernel could resume parked children itself when an answer lands.
+- **A new plugin can be handed work without code, but cannot be started on its own
+  without a run kind** (`plugins/kinds.ts`) -- the parked user-plugins work.
+- **The console has no view of child runs** beyond the kernel's own projection, and
+  shows a delegated question as a plain checkpoint on the parent.
+- **A parked root-cause trace now reports "paused" to the console** with its reason,
+  as every other kind does; before the single run path it reported nothing.
+- **A hand-off does not count as looking** for a plugin's `min_results` ask when the
+  agent stops early, though it does for the check on `conclude`.
 
 ## Parked
 

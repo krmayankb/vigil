@@ -26,7 +26,7 @@ const CASE: SpecPaths = {
 };
 
 function huntSpec() {
-  return buildSpec(HUNT, archFor("hunt").actions);
+  return buildSpec(HUNT);
 }
 
 // A minimal arch, so a test that is about one key is not also about the rest.
@@ -44,8 +44,8 @@ function archOf(extra: string, action = "EXAMINE"): string {
   ].join("\n");
 }
 
-function loadArchOnly(body: string, handled: readonly string[] = ["EXAMINE", "CONCLUDE"]) {
-  return buildSpec({ ...CASE, arch: scratchFile(`arch-${Math.random().toString(36).slice(2)}.yaml`, body) }, handled);
+function loadArchOnly(body: string) {
+  return buildSpec({ ...CASE, arch: scratchFile(`arch-${Math.random().toString(36).slice(2)}.yaml`, body) });
 }
 
 describe("the registry resolves a run kind to an arch", () => {
@@ -53,13 +53,12 @@ describe("the registry resolves a run kind to an arch", () => {
     expect(registeredKinds()).toEqual(["adjudicate", "chat", "compose", "hunt", "investigate", "root_cause"]);
   });
 
-  // Adding an agent type is an arch file and an entry. Nothing in the worker
-  // names a kind, so a new one reaches its loop without a branch being added.
-  it("names the loop that drives each kind, rather than leaving the worker to switch", () => {
-    expect(archFor("hunt").workflow).toBe("hunt");
-    expect(archFor("root_cause").workflow).toBe("rootcause");
-    expect(archFor("investigate").workflow).toBe("lead");
-    expect(archFor("compose").workflow).toBe("compose");
+  // Every kind runs one way (plugins/run.ts): its entry names its plugin's file and
+  // how its ledger is read, never a loop of its own.
+  it("names each kind's plugin file, and no loop", () => {
+    expect(archFor("hunt").arch).toMatch(/plugins\/hunt\/plugin\.yaml$/);
+    expect(archFor("root_cause").arch).toMatch(/plugins\/rootcause\/plugin\.yaml$/);
+    expect(Object.keys(archFor("investigate"))).not.toContain("workflow");
   });
 
   // A kind in the union with no arch behind it is the failure this prevents.
@@ -96,7 +95,7 @@ describe("the arch layer each plugin.yaml carries", () => {
 
   // An adjudication is a hunt run as a second opinion: the same workers and critic.
   it("reads the adjudicator's as the hunt's", () => {
-    const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch }, archFor("adjudicate").actions);
+    const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch });
     expect(spec.arch).toBe("adjudicate");
     expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
     expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
@@ -122,7 +121,6 @@ describe("the arch layer each plugin.yaml carries", () => {
           ].join("\n"),
         ),
       },
-      archFor("root_cause").actions,
       archFor("root_cause").owned,
     );
     expect(spec.arch).toBe("rootcause");
@@ -135,7 +133,7 @@ describe("the arch layer each plugin.yaml carries", () => {
   });
 
   it("reads investigate's as a single lead with no workers and no critic", () => {
-    const spec = buildSpec(CASE, archFor("investigate").actions);
+    const spec = buildSpec(CASE);
     expect(spec.arch).toBe("investigate");
     expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });
     expect(spec.roles.workers).toEqual({});
@@ -163,14 +161,14 @@ describe("the three files are disjoint", () => {
 
   it("sends an arch key found in a playbook to the arch file", () => {
     const playbook = scratchFile("stray.playbook.yaml", "name: stray\nroles: { lead: {} }\n");
-    expect(() => buildSpec({ ...CASE, playbook }, ["EXAMINE", "CONCLUDE"])).toThrow(
+    expect(() => buildSpec({ ...CASE, playbook })).toThrow(
       /roles belongs in the arch file, not the playbook file/,
     );
   });
 
   it("sends a playbook key found in a config to the playbook file", () => {
     const config = scratchFile("stray.config.yaml", "model: m\nobjectives: [find it]\n");
-    expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(
+    expect(() => buildSpec({ ...CASE, config })).toThrow(
       /objectives belongs in the playbook file, not the config file/,
     );
   });
@@ -182,17 +180,6 @@ describe("the three files are disjoint", () => {
 });
 
 describe("the loader refuses an arch it could not honour", () => {
-  it("rejects an action no workflow handles", () => {
-    expect(() => loadArchOnly(archOf("dispatch: { mode: serial }", "FLY"))).toThrow(
-      /roles\.lead declares action\(s\) no workflow handles: FLY/,
-    );
-  });
-
-  it("rejects a lead with no action enum", () => {
-    const body = "name: n\nroles:\n  lead:\n    prompt: Decide.\n    output_schema: { type: object }\n";
-    expect(() => loadArchOnly(body)).toThrow(/needs a non-empty action enum/);
-  });
-
   // mode is checked rather than coerced, so it is not a field nothing reads.
   it("rejects a topology nothing implements, at load rather than at run", () => {
     expect(() => loadArchOnly(archOf("dispatch: { topology: hive }"))).toThrow(/no topology hive/);
@@ -226,31 +213,31 @@ describe("the loader refuses an arch it could not honour", () => {
 
   it("rejects a playbook directive naming a role the arch does not declare", () => {
     const playbook = scratchFile("bad-directive.yaml", "name: p\ndirectives: { forensics: look here }\n");
-    expect(() => buildSpec({ ...CASE, playbook }, ["EXAMINE", "CONCLUDE"])).toThrow(
+    expect(() => buildSpec({ ...CASE, playbook })).toThrow(
       /directives name unknown role\(s\): forensics/,
     );
   });
 
   it("reports the path of the file it could not read", () => {
     const missing = { ...CASE, config: "/nowhere/vigil.config.yaml" };
-    expect(() => buildSpec(missing, archFor("investigate").actions)).toThrow(SpecError);
-    expect(() => buildSpec(missing, archFor("investigate").actions)).toThrow(/no such config file: \/nowhere\/vigil.config.yaml/);
+    expect(() => buildSpec(missing)).toThrow(SpecError);
+    expect(() => buildSpec(missing)).toThrow(/no such config file: \/nowhere\/vigil.config.yaml/);
   });
 });
 
 describe("the config layer", () => {
   it("refuses an approval naming a tool it does not declare", () => {
     const config = scratchFile("bad-approval.yaml", "model: m\ntools: [{ id: a, kind: k }]\napprovals: [b]\n");
-    expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(/approvals name tool\(s\).*: b/);
+    expect(() => buildSpec({ ...CASE, config })).toThrow(/approvals name tool\(s\).*: b/);
   });
 
   it("refuses an unknown budget key rather than defaulting past it", () => {
     const config = scratchFile("bad-budget.yaml", "model: m\nbudgets: { max_dollars: 4 }\n");
-    expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(/unknown budgets key\(s\): max_dollars/);
+    expect(() => buildSpec({ ...CASE, config })).toThrow(/unknown budgets key\(s\): max_dollars/);
   });
 
   it("refuses a config that names no model", () => {
     const config = scratchFile("no-model.yaml", "budgets: { max_calls: 2 }\n");
-    expect(() => buildSpec({ ...CASE, config }, ["EXAMINE", "CONCLUDE"])).toThrow(/config needs a model/);
+    expect(() => buildSpec({ ...CASE, config })).toThrow(/config needs a model/);
   });
 });

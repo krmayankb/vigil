@@ -30,7 +30,7 @@ const RUN = "7d3c2d3e-0000-4000-8000-00000000ca95";
 const SPEC: RunSpec = (() => {
   const entry = archFor("hunt");
   const fixtures = join(import.meta.dirname, "..", "fixtures");
-  const spec = buildSpec({ arch: entry.arch, playbook: join(fixtures, "hunt.playbook.yaml"), config: join(fixtures, "hunt.config.yaml") }, entry.actions, entry.owned);
+  const spec = buildSpec({ arch: entry.arch, playbook: join(fixtures, "hunt.playbook.yaml"), config: join(fixtures, "hunt.config.yaml") }, entry.owned);
   return { ...spec, sections: { ...spec.sections, hypotheses: ["10.0.0.5 is beaconing to 45.77.53.176"] } };
 })();
 
@@ -95,7 +95,7 @@ async function hunt(steps: readonly Step[], failure: ToolFailure | null) {
     memory: nullMemory,
     state,
   };
-  await runHunt(harness, { run_id: RUN, run_kind: "hunt", spec: SPEC, actions: [], queue: new InProcessDirectiveQueue() });
+  await runHunt(harness, { run_id: RUN, run_kind: "hunt", spec: SPEC, queue: new InProcessDirectiveQueue() });
   const events = (await state.read(RUN)) as readonly HuntEvent[];
   const projection = fold(events);
   // The arch's roles ask for a capability the fixture deployment binds no tool to,

@@ -11,7 +11,7 @@ const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 function specWith(configYaml: string) {
   const entry = archFor("hunt");
   return assembleSpec({
-    arch: loadArch(entry.arch, entry.actions),
+    arch: loadArch(entry.arch),
     playbook: parsePlaybook(readFileSync(join(FIXTURES, "hunt.playbook.yaml"), "utf8"), entry.owned),
     config: parseConfig(configYaml, entry.owned),
     prompt: "go",
@@ -57,7 +57,7 @@ describe("constraining a worker's declared vocabulary", () => {
     const entry = archFor("hunt");
     const declared = domains.map((one) => `  - ${one}`).join("\n");
     return assembleSpec({
-      arch: loadArch(entry.arch, entry.actions),
+      arch: loadArch(entry.arch),
       playbook: parsePlaybook(PLAYBOOK.replace("---\n", `---\ndata_domains:\n${declared}\n`), entry.owned),
       config: parseConfig(BASE, entry.owned),
       prompt: "go",
@@ -106,7 +106,7 @@ describe("constraining the technique a worker may cite", () => {
     const entry = archFor("hunt");
     const declared = techniques.map((one) => `  - ${one}`).join("\n");
     return assembleSpec({
-      arch: loadArch(entry.arch, entry.actions),
+      arch: loadArch(entry.arch),
       playbook: parsePlaybook(PLAYBOOK.replace("---\n", `---\nattack_techniques:\n${declared}\n`), entry.owned),
       config: parseConfig(BASE, entry.owned),
       prompt: "go",
@@ -141,7 +141,7 @@ describe("constraining the technique a worker may cite", () => {
   it("narrows source_system and attack_technique independently", () => {
     const entry = archFor("hunt");
     const spec = assembleSpec({
-      arch: loadArch(entry.arch, entry.actions),
+      arch: loadArch(entry.arch),
       playbook: parsePlaybook(
         PLAYBOOK.replace("---\n", "---\ndata_domains:\n  - net_flow\nattack_techniques:\n  - T1071.001\n"),
         entry.owned,

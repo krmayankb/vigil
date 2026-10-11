@@ -3,9 +3,8 @@ import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { archFor, KIND_PLUGINS } from "./plugins/kinds.js";
-import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
-import { loadPlugin } from "./plugins/index.js";
-import { toolsFrom } from "./tools/remote.js";
+import type { AgentKinds } from "./core/agent.js";
+import { runPlugin } from "./plugins/run.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { fleetBudget, harnessFor, internalToken, shareFindings, type HarnessFactory } from "./harness.js";
@@ -36,12 +35,6 @@ import { PublishingLedger } from "./ledger/publish.js";
 import { PgSharedFindings } from "./ledger/shared-findings.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { httpMirror, nullMirror, type Mirror, type StatusUpdate } from "./plugins/compose/mirror.js";
-import { runCompose } from "./plugins/compose/workflow.js";
-import type { ComposeKinds } from "./plugins/compose/vocabulary.js";
-import { runHunt } from "./plugins/hunt/workflow.js";
-import { runRootCause } from "./plugins/rootcause/workflow.js";
-import type { RootCauseKinds } from "./plugins/rootcause/proof.js";
-import type { HuntKinds } from "./plugins/hunt/ledger.js";
 import type { DirectiveQueue } from "./plugins/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./plugins/hunt/directives.js";
 import { DirectiveRepository } from "./ledger/directives.js";
@@ -89,7 +82,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
       job.request.overrides,
     );
   if (!isReference(job.request.playbook)) {
-    return tighten(buildSpec({ arch, playbook: job.request.playbook, config: job.request.config }, entry.actions, entry.owned, job.request.prompt));
+    return tighten(buildSpec({ arch, playbook: job.request.playbook, config: job.request.config }, entry.owned, job.request.prompt));
   }
 
   // A reference answers with both layers, so a config path beside one is a second
@@ -100,7 +93,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
   const layers = await resolve(job.request.playbook);
   return tighten(
     assembleSpec({
-      arch: loadArch(arch, entry.actions),
+      arch: loadArch(arch),
       playbook: parsePlaybook(layers.playbook, entry.owned),
       config: parseConfig(layers.config, entry.owned),
       prompt: job.request.prompt,
@@ -210,51 +203,24 @@ async function drive(
   // full budget, and a watchdog that resumes it automatically makes that a loop.
   const seed = seedFrom(await state.read(run_id));
 
-  if (kind === "compose") {
-    await runCompose(build(kind, spec, as<ComposeKinds>(state), undefined, seed), { run_id, spec, started_by, mirror: mirrorFor(), signal });
-    return null;
-  }
-  const entry = archFor(kind);
-  // A kind whose plugin the worker drives directly: investigate. The others run their
-  // plugin through the wrappers below, which carry what each one reports out.
-  if (entry.plugin !== undefined) {
-    const { manifest, hooks } = loadPlugin(entry.plugin);
-    const harness = build(kind, spec, as<AgentKinds>(state), undefined, seed);
-    // The plugin's grants, not the arch's: the kernel registers the deployment's
-    // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
-    const done = await runAgent(harness, {
-      run_id, run_kind: kind, spec, plugin: manifest, ...(hooks === undefined ? {} : { hooks }),
-      tools: toolsFrom(spec.tools), started_by, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
-    });
-    return done.status === "waiting_approval" ? done.reason : null;
-  }
-  if (entry.workflow === "hunt") {
-    const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
+  const plugin = (KIND_PLUGINS as Record<string, string | undefined>)[kind];
+  if (plugin === undefined) throw new SpecError(`no plugin runs run_kind ${kind}`);
+  const harness = build(kind, spec, as<AgentKinds>(state), undefined, seed);
+  const forward = kind === "hunt";
+  const done = await runPlugin(plugin, harness, { run_id, run_kind: kind, spec, started_by, signal }, {
+    queue: directives,
+    mirror: mirrorFor(),
+    answers: answersFor(),
+    announce: announceFor(),
+    // Reaching an active iteration means the run is going, so the row clears its
+    // reason as it takes the cost. The reason it parked goes back for settle.
+    onCost: (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd }),
     // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
     // so its case must not wait on a terminal that may be far off or never come.
-    const onHandoff = kind === "hunt" ? handoffFor() : undefined;
-    // Reaching an active iteration means the hunt is running, so the row clears its
-    // reason as it takes the cost. The reason it parked goes back for settle.
-    const onCost = (runId: string, cost_usd: number) => tell(runId, { status: "running", reason: "", cost_usd });
-    const done = await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), ...(kind === "hunt" ? { onFindings: findingsFor() } : {}), onCost, signal });
-    return done.status === "waiting_approval" ? done.reason : null;
-  }
-  if (entry.workflow === "rootcause") {
-    const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
-    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal, queue: directives });
-    return null;
-  }
-  throw new SpecError(`no workflow is wired for run_kind ${kind}`);
-}
-
-// An operator's stop, read off the same queue every workflow reads its directives from.
-function stopFrom(queue: DirectiveQueue, runId: string): StopSource {
-  return async () => {
-    const found = (await queue.pending(runId, [])).find((directive) => directive.kind === "abort");
-    if (found === undefined) return null;
-    const { directive_id, actor, kind, text, created_at } = found;
-    return { directive_id, actor, kind, text, created_at };
-  };
+    ...(forward ? { onHandoff: handoffFor(), onFindings: findingsFor() } : {}),
+  });
+  // Compose reports its own pause through its phases.
+  return done.status === "waiting_approval" && kind !== "compose" ? done.reason : null;
 }
 
 // Resolves the spec on a start and reads it back off the ledger on a resume, so an

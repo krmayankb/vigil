@@ -10,6 +10,7 @@ import type {
   ReviewPayload,
   RunKind,
   RunOutcome,
+  ParentLink,
   RunPayload,
   TerminalHandoff,
   TerminalPayload,
@@ -27,6 +28,7 @@ import type { ToolDispatch } from "./seams.js";
 import type { RunSpec, ToolSpec } from "./spec.js";
 import { persistAsk, schemaErrors, streamTurn, type StreamEvent } from "./stream.js";
 import { childRunId, Framer } from "./frames.js";
+import { delegateTools } from "./delegation.js";
 import { classify, declaredGaps, grounded, kernelRecord, RECORD_GUIDANCE, recordTools, type RecordBackend } from "./record.js";
 import type { RunEventKind } from "../contracts/events.js";
 
@@ -151,6 +153,18 @@ export interface AgentOptions {
   // because the person may always say something else.
   conversation?: Conversation;
   signal?: AbortSignal;
+  // Every plugin this deployment ships, by id: what a delegation runs. Absent, the
+  // run hands nothing off, whatever its plugin declares.
+  plugins?: (id: string) => LoadedPlugin;
+  // Set on a run another run handed work to: written on its run event, and where
+  // its model spend is journaled, so the parent's ledger carries the whole bill.
+  parent?: ParentLink;
+  spend_to?: { run_id: string; run_kind: RunKind };
+}
+
+export interface LoadedPlugin {
+  manifest: PluginManifest;
+  hooks?: PluginHooks;
 }
 
 export interface Conversation {
@@ -318,7 +332,7 @@ export async function* streamAgent(harness: Harness<Kinds>, options: AgentOption
 // plugin's own, and the skill loader, each shaped by the plugin if it asks.
 function equipped(harness: Harness<Kinds>, options: AgentOptions): Harness<Kinds> {
   const ctx: PluginContext = { harness, options };
-  const own = [...(options.hooks?.tools?.(ctx) ?? []), ...recordToolsFor(ctx), ...sharedToolFor(ctx), ...concludeToolFor(ctx)];
+  const own = [...(options.hooks?.tools?.(ctx) ?? []), ...recordToolsFor(ctx), ...sharedToolFor(ctx), ...delegateTools(ctx), ...concludeToolFor(ctx)];
   const registry =
     options.tools === undefined
       ? layered(harness.registry, own)
@@ -433,6 +447,7 @@ async function unreadShared(ctx: PluginContext): Promise<string | null> {
   if (updates.findings.length === 0) return null;
   const entities = [...new Set(updates.findings.map((one) => one.entity_key))].sort();
   const brief = updates.findings.map((one) => ({
+    finding_id: one.finding_id,
     run_id: one.run_id,
     entity: one.entity_key,
     kind: one.kind,
@@ -670,6 +685,7 @@ function turnFor(
     recall_keys: options.recall_keys ?? openingKeys(spec),
     // A conversation stops whenever the person's question is answered.
     ...(plugin.min_results === undefined || options.conversation !== undefined ? {} : { persist: { min_results: plugin.min_results } }),
+    ...(options.spend_to === undefined ? {} : { spend_to: options.spend_to }),
     // Numbered only when the answer can cite them.
     ...(structured?.citations_field === undefined ? {} : { refs: { prefix: CALL_REF, offset: calls.length } }),
     ...(signal === undefined ? {} : { signal }),
@@ -851,7 +867,7 @@ export const CHILD_KIND: RunKind = "subagent";
 // plugin hook passes its context; a caller outside the loop passes just these.
 export interface ParentRun {
   harness: Harness<Kinds>;
-  options: Pick<AgentOptions, "run_id" | "run_kind">;
+  options: Pick<AgentOptions, "run_id" | "run_kind" | "spend_to">;
 }
 
 export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig): Promise<Outcome<T> & { child_run_id: string }> {
@@ -880,7 +896,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
   }
 
   const framer = await Framer.open(harness.state, child, CHILD_KIND, [], []);
-  const cfg: TurnConfig = { ...turn, run_id: child, run_kind: CHILD_KIND, spend_to: { run_id: options.run_id, run_kind: options.run_kind } };
+  const cfg: TurnConfig = { ...turn, run_id: child, run_kind: CHILD_KIND, spend_to: options.spend_to ?? { run_id: options.run_id, run_kind: options.run_kind } };
   const stream = streamTurn<T, Kinds>(cfg, harness);
   let turns = 0;
   let count = 0;
@@ -936,7 +952,7 @@ export async function runChild<T>(ctx: ParentRun, key: string, turn: TurnConfig)
 }
 
 // The parent's end of the link, written once.
-async function linkChild(
+export async function linkChild(
   ctx: ParentRun,
   child: string,
   role: string,
@@ -1211,7 +1227,7 @@ function event(options: AgentOptions, kind: AgentEvent<Kinds>["kind"], payload: 
   return { run_id: options.run_id, run_kind: options.run_kind, kind, payload } as unknown as Event;
 }
 
-function lastPayload<P>(events: Ledger, kind: string): P | null {
+export function lastPayload<P>(events: Ledger, kind: string): P | null {
   const found = events.findLast((one) => one.kind === kind);
   return found === undefined ? null : (found.payload as P);
 }
@@ -1236,6 +1252,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       seed: options.run_id,
       tenant_id: null,
       started_by: options.started_by ?? "worker",
+      ...(options.parent === undefined ? {} : { parent: options.parent }),
     };
     await options.hooks.open({ harness, options }, base);
     return;
@@ -1251,6 +1268,7 @@ async function open(harness: Harness<Kinds>, options: AgentOptions): Promise<voi
       seed: options.run_id,
       tenant_id: null,
       started_by: options.started_by ?? "worker",
+      ...(options.parent === undefined ? {} : { parent: options.parent }),
     }),
     ...unbound,
   ]);

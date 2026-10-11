@@ -2,8 +2,11 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { isStructured, RECORD_MODES, type ConclusionSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
+import { isStructured, RECORD_MODES, type ConclusionSpec, type DelegateSpec, type GuardSpec, type PluginManifest, type RecordMode, type SkillSpec } from "../contracts/plugin.js";
 import { SpecError } from "../core/spec.js";
+import { CONCLUDE_TOOL, SKILL_TOOL } from "../core/agent.js";
+import { LINK_TOOL, PROPOSE_TOOL, QUESTION_TOOL } from "../core/record.js";
+import { SHARED_TOOL } from "../core/shared-findings.js";
 
 // A plugin is a directory holding plugin.yaml. Its skills are named there and
 // read from the repo's one skill library, core/skills/library/<name>/SKILL.md,
@@ -29,6 +32,14 @@ export function pluginFor(id: string, root: string = ROOT, skills: string = SKIL
   if (manifest.id !== id) throw new SpecError(`${file} declares id ${manifest.id}, but lives under ${id}`);
   cache.set(key, manifest);
   return manifest;
+}
+
+// Every plugin this package ships: each directory here holding a plugin.yaml.
+export function pluginIds(root: string = ROOT): string[] {
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "plugin.yaml")))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 export function parsePlugin(text: string, available: readonly SkillSpec[], where = "plugin.yaml"): PluginManifest {
@@ -58,6 +69,8 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     throw new SpecError(`${where}: min_results must be a positive integer`);
   }
 
+  const delegates = raw["delegates"] === undefined ? undefined : delegatesOf(raw["delegates"], id, where);
+
   return {
     id,
     description: text_(raw, "description", where),
@@ -70,7 +83,46 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     ...(record === undefined ? {} : { record }),
     ...(min_results === undefined ? {} : { min_results: min_results as number }),
     ...(finish_with === undefined ? {} : { finish_with: finish_with as "ask" | "tool" }),
+    ...(delegates === undefined ? {} : { delegates }),
   };
+}
+
+// Each verb is a tool name, so it is held to one: lower snake case, unique, and not
+// one the kernel already offers. Whether the plugin it names exists is checked when
+// the run is equipped, where every plugin is in reach; here only this file is.
+const VERB = /^[a-z][a-z0-9_]{2,47}$/;
+const KERNEL_TOOLS = new Set([CONCLUDE_TOOL, SKILL_TOOL, SHARED_TOOL, PROPOSE_TOOL, LINK_TOOL, QUESTION_TOOL]);
+
+function delegatesOf(value: unknown, self: string, where: string): DelegateSpec[] {
+  if (!Array.isArray(value)) throw new SpecError(`${where}: delegates must be a list`);
+  const seen = new Set<string>();
+  return value.map((entry, index) => {
+    const at = `${where}: delegates[${index}]`;
+    if (typeof entry !== "object" || entry === null) throw new SpecError(`${at} must be a mapping`);
+    const raw = entry as Record<string, unknown>;
+    const verb = text_(raw, "verb", at);
+    if (!VERB.test(verb)) throw new SpecError(`${at}: verb ${verb} must be lower snake case, 3-48 characters`);
+    if (KERNEL_TOOLS.has(verb)) throw new SpecError(`${at}: verb ${verb} is a tool the kernel already offers`);
+    if (seen.has(verb)) throw new SpecError(`${at}: verb ${verb} is declared twice`);
+    seen.add(verb);
+    const plugin = text_(raw, "plugin", at);
+    // One level: a child is never handed delegation of its own, so naming itself
+    // could only ever be a loop a person did not mean.
+    if (plugin === self) throw new SpecError(`${at}: a plugin cannot delegate to itself`);
+    const share = raw["budget_share"] ?? 0.25;
+    if (typeof share !== "number" || !(share > 0 && share <= 1)) throw new SpecError(`${at}: budget_share must be a number above 0 and at most 1`);
+    const max_turns = raw["max_turns"];
+    if (max_turns !== undefined && (typeof max_turns !== "number" || !Number.isInteger(max_turns) || max_turns < 1)) {
+      throw new SpecError(`${at}: max_turns must be a positive integer`);
+    }
+    return {
+      verb,
+      plugin,
+      description: text_(raw, "description", at),
+      budget_share: share,
+      ...(max_turns === undefined ? {} : { max_turns: max_turns as number }),
+    };
+  });
 }
 
 // A required record has to surface in the answer: its conclusion names the field
