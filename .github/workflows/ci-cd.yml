@@ -460,7 +460,8 @@ jobs:
             -f infra/database/init/21_agent_run_leases.sql \
             -f infra/database/init/41_agent_run_leases_lane.sql \
             -f infra/database/init/42_entity_findings.sql \
-            -f infra/database/init/43_agent_content.sql
+            -f infra/database/init/43_agent_content.sql \
+            -f infra/database/init/45_agent_retention.sql
 
       - name: Typecheck
         working-directory: services/agent
@@ -599,7 +600,8 @@ jobs:
             -f infra/database/init/21_agent_run_leases.sql \
             -f infra/database/init/41_agent_run_leases_lane.sql \
             -f infra/database/init/42_entity_findings.sql \
-            -f infra/database/init/43_agent_content.sql
+            -f infra/database/init/43_agent_content.sql \
+            -f infra/database/init/45_agent_retention.sql
 
       - name: Install restic and pg_dump
         # backup create shells out to both. pg_dump's major must be at least the

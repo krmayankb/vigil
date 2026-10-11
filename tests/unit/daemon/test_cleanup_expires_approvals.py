@@ -5,7 +5,7 @@ computed a cutoff and only logged it, so "cleanup runs" was true while nothing w
 cleaned. A sweep that is registered but never reached, or reached with the wrong
 window, fails exactly the same silent way (#675).
 
-Both sweeps are patched in every test, not only the one under assertion. An
+Every sweep is patched in every test, not only the one under assertion. An
 unpatched sweep reaches Postgres for real, and this is a no-service unit test --
 it passes on a developer's machine with a dev database up and fails in CI.
 """
@@ -30,6 +30,8 @@ async def test_cleanup_expires_approvals_using_the_configured_window():
     with (
         patch("core.response.checkpoints.expire_stale", return_value=2) as sweep,
         patch("core.memory.recall.expire_read_log", return_value=0),
+        patch("core.agents.ledger_retention.expire_runs", return_value=0),
+        patch("core.agents.ledger_retention.expire_shared_findings", return_value=0),
     ):
         result = await scheduler._run_cleanup()
 
@@ -49,6 +51,8 @@ async def test_cleanup_expires_the_read_log_at_the_retention_cutoff():
     with (
         patch("core.response.checkpoints.expire_stale", return_value=0),
         patch("core.memory.recall.expire_read_log", return_value=7) as reads,
+        patch("core.agents.ledger_retention.expire_runs", return_value=0),
+        patch("core.agents.ledger_retention.expire_shared_findings", return_value=0),
     ):
         result = await scheduler._run_cleanup()
 
@@ -64,6 +68,8 @@ async def test_cleanup_reports_zero_when_nothing_is_stale():
     with (
         patch("core.response.checkpoints.expire_stale", return_value=0),
         patch("core.memory.recall.expire_read_log", return_value=0),
+        patch("core.agents.ledger_retention.expire_runs", return_value=0),
+        patch("core.agents.ledger_retention.expire_shared_findings", return_value=0),
     ):
         result = await scheduler._run_cleanup()
 
@@ -104,6 +110,8 @@ async def test_cleanup_never_deletes_findings_or_processed_events(caplog):
     with (
         patch("core.response.checkpoints.expire_stale", return_value=2),
         patch("core.memory.recall.expire_read_log", return_value=5),
+        patch("core.agents.ledger_retention.expire_runs", return_value=0),
+        patch("core.agents.ledger_retention.expire_shared_findings", return_value=0),
         caplog.at_level(logging.INFO, logger="services.daemon.scheduler"),
     ):
         result = await scheduler._run_cleanup()
@@ -117,3 +125,35 @@ async def test_cleanup_never_deletes_findings_or_processed_events(caplog):
     assert "removed 5 episodic read log rows" in caplog.text
     assert result["approvals_expired"] == 2
     assert result["read_log_removed"] == 5
+
+
+@pytest.mark.asyncio
+async def test_cleanup_retires_agent_runs_and_shared_findings_at_their_own_windows():
+    config = SchedulerConfig()
+    config.ledger_retention_days = 200
+    config.shared_findings_retention_days = 14
+    scheduler = TaskScheduler(config)
+
+    with (
+        patch("core.response.checkpoints.expire_stale", return_value=0),
+        patch("core.memory.recall.expire_read_log", return_value=0),
+        patch("core.agents.ledger_retention.expire_runs", return_value=4) as runs,
+        patch("core.agents.ledger_retention.expire_shared_findings", return_value=9) as shared,
+    ):
+        result = await scheduler._run_cleanup()
+
+    runs.assert_called_once_with(200)
+    shared.assert_called_once_with(14)
+    assert (result["runs_retired"], result["shared_findings_removed"]) == (4, 9)
+
+
+def test_the_agent_retention_windows_are_wired_from_settings(monkeypatch):
+    from core.config import get_settings
+    from services.daemon.config import DaemonConfig
+
+    monkeypatch.setenv("DAEMON_LEDGER_RETENTION_DAYS", "365")
+    monkeypatch.setenv("DAEMON_SHARED_FINDINGS_RETENTION_DAYS", "0")
+    get_settings.cache_clear()
+
+    config = DaemonConfig.from_env()
+    assert (config.scheduler.ledger_retention_days, config.scheduler.shared_findings_retention_days) == (365, 0)

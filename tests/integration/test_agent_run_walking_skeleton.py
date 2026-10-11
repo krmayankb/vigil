@@ -50,6 +50,7 @@ AGENT_DDL = (
     "41_agent_run_leases_lane.sql",
     "42_entity_findings.sql",
     "43_agent_content.sql",
+    "45_agent_retention.sql",
 )
 
 

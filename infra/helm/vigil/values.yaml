@@ -435,6 +435,7 @@ dbInit:
     - 42_entity_findings.sql
     - 43_agent_content.sql
     - 44_episodic_runs.sql
+    - 45_agent_retention.sql
   resources:
     requests:
       cpu: 50m
@@ -746,6 +747,10 @@ config:
   # Ages out only the episodic read log; findings and processed events are
   # kept until an admin deletes them.
   DAEMON_CLEANUP_RETENTION_DAYS: "90"
+  # Agent run ledgers retired after this many days (floor 7; 0 keeps them), and
+  # findings runs shared with each other. Memory distilled from runs is kept.
+  DAEMON_LEDGER_RETENTION_DAYS: "180"
+  DAEMON_SHARED_FINDINGS_RETENTION_DAYS: "30"
   DAEMON_METRICS_ENABLED: "true"
   DAEMON_METRICS_PORT: "9090"
   DAEMON_HEALTH_PORT: "9091"

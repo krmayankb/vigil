@@ -286,6 +286,11 @@ class Settings(BaseSettings):
     # episodic read log, while an unanswered containment proposal goes stale
     # in days (#675).
     daemon_approval_expiry_days: int = 7
+    # Agent run ledgers: whole ended runs older than this are retired (floor 7;
+    # 0 keeps everything). Memory distilled from them is kept.
+    daemon_ledger_retention_days: int = 180
+    # Findings runs shared with each other while they worked; 0 keeps everything.
+    daemon_shared_findings_retention_days: int = 30
     daemon_metrics_enabled: bool = True
     daemon_metrics_port: int = 9090
     daemon_health_host: str = "localhost"

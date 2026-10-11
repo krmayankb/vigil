@@ -393,6 +393,19 @@ class TaskScheduler:
         if reads:
             logger.info("Cleanup removed %d episodic read log rows", reads)
 
+        # Agent run ledgers past retention, through the one function the app role
+        # may retire runs with, and the findings runs shared with each other.
+        from core.agents.ledger_retention import expire_runs, expire_shared_findings
+
+        runs = await asyncio.to_thread(expire_runs, self.config.ledger_retention_days)
+        shared = await asyncio.to_thread(
+            expire_shared_findings, self.config.shared_findings_retention_days
+        )
+        if runs or shared:
+            logger.info(
+                "Cleanup retired %d agent runs and %d shared findings", runs, shared
+            )
+
         logger.info(
             "Cleanup complete: expired %d unanswered approvals, removed %d "
             "episodic read log rows",
@@ -404,6 +417,8 @@ class TaskScheduler:
             "cutoff_date": cutoff.isoformat(),
             "approvals_expired": expired,
             "read_log_removed": reads,
+            "runs_retired": runs,
+            "shared_findings_removed": shared,
         }
 
     async def _run_probe_sweep(self):

@@ -376,6 +376,9 @@ services:
       DAEMON_THREAT_HUNT_INTERVAL: ${DAEMON_THREAT_HUNT_INTERVAL:-86400}
       # Ages out only the episodic read log; findings/events are kept until deleted
       DAEMON_CLEANUP_RETENTION_DAYS: ${DAEMON_CLEANUP_RETENTION_DAYS:-90}
+      # Agent run ledgers and shared findings; 0 keeps them
+      DAEMON_LEDGER_RETENTION_DAYS: ${DAEMON_LEDGER_RETENTION_DAYS:-180}
+      DAEMON_SHARED_FINDINGS_RETENTION_DAYS: ${DAEMON_SHARED_FINDINGS_RETENTION_DAYS:-30}
       # Metrics / Health
       DAEMON_METRICS_ENABLED: ${DAEMON_METRICS_ENABLED:-true}
       DAEMON_HEALTH_PORT: ${DAEMON_HEALTH_PORT:-9091}
