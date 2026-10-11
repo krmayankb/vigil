@@ -4072,6 +4072,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/fleet-wall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fleet Wall
+         * @description Every open case as a cell, grouped by workflow, with the fleet strip.
+         */
+        get: operations["get_api_fleet-wall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -5690,6 +5710,26 @@ export interface paths {
          * @description One alert in the feed item's shape, including noise-marked and older ones.
          */
         get: operations["get_api_overview_alerts_finding_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pulse/{tab}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pulse
+         * @description One Pulse tab: summary, throughput, or work (paused and stuck).
+         */
+        get: operations["get_api_pulse_tab"];
         put?: never;
         post?: never;
         delete?: never;
@@ -19920,6 +19960,39 @@ export interface operations {
             };
         };
     };
+    "get_api_fleet-wall": {
+        parameters: {
+            query?: {
+                just_closed_minutes?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_health: {
         parameters: {
             query?: never;
@@ -22612,6 +22685,39 @@ export interface operations {
             };
             path: {
                 finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_pulse_tab: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                tab: string;
             };
             cookie?: never;
         };

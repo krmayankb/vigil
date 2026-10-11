@@ -269,6 +269,13 @@ vi.mock('../services/api', () => ({
       },
     }),
   },
+  // Pulse and the Fleet Wall poll their own reads; the shell tests never open them.
+  monitorApi: {
+    wall: () => new Promise(() => {}),
+    summary: () => new Promise(() => {}),
+    throughput: () => new Promise(() => {}),
+    work: () => new Promise(() => {}),
+  },
   overviewApi: {
     get: () => Promise.resolve({
       data: {
@@ -387,7 +394,7 @@ describe('SocConsole', () => {
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     const nav = screen.getByRole('navigation', { name: 'Primary' })
     const names = within(nav).getAllByRole('button').map((button) => button.getAttribute('aria-label'))
-    expect(names.slice(0, 6)).toEqual(['Home', 'Overview', 'Triage queue', 'Cases', 'Agents & workflows', 'Settings'])
+    expect(names.slice(0, 8)).toEqual(['Home', 'Overview', 'Pulse', 'Fleet Wall', 'Triage queue', 'Cases', 'Agents & workflows', 'Settings'])
     expect(screen.getByRole('button', { name: 'Home' }).querySelector('.vg-nav-count')).toBeNull()
     expect(screen.getByRole('button', { name: 'Cases' }).querySelector('.vg-nav-count')).toBeNull()
   })
@@ -506,14 +513,14 @@ describe('SocConsole', () => {
         el.classList.contains('vg-nav-sep') ? '|' : 'x',
       ).join('')
     const { unmount } = renderConsole('/overview')
-    // Home | Overview | Triage queue Cases | Agents & workflows Settings | More | chips
-    expect(rules()).toBe('x|x|xx|xx|xx')
+    // Home | Overview Pulse Fleet Wall | Triage queue Cases | Agents & workflows Settings | More | chips
+    expect(rules()).toBe('x|xxx|xx|xx|xx')
     expect(screen.getAllByRole('navigation', { name: 'Primary' })[0].querySelectorAll('.vg-nav-sep')).toHaveLength(4)
     unmount()
 
     authState.allow = (permission: string) => permission !== 'cases.read'
     renderConsole('/overview')
-    expect(rules()).toBe('x|x|x|xx|xx')
+    expect(rules()).toBe('x|xxx|x|xx|xx')
   })
 
   it('draws a page heading for a screen that has none of its own, and not for the ones that do', async () => {

@@ -106,8 +106,13 @@ each belongs. Kept current as phases land; remove an item when it ships.
 
 ## Phase 5 (memory quality and storage)
 
-- **The console page for the fleet** waits on the PRD (metrics are done: `GET
-  /metrics`). The backend does not proxy `/fleet` or `/metrics` yet.
+- **Fleet Wall and Pulse are built** (console PRD rev 1.1; Pulse tabs Summary,
+  Throughput, Paused and stuck). What they show as "Not measured yet" because Vigil
+  does not record it: on hold, stuck, incidents, dropped alerts and the drop line,
+  a close a person approved apart from one agents made alone, and a per-workflow
+  concurrency cap. Not built: Pulse's Decisions, Sources and memory, and System
+  tabs; Hold and Close from the wall; turning adjustments from Pulse (they are
+  read-only). The backend still does not proxy agent-serve's `/fleet` or `/metrics`.
 - **No week-long soak.** Storage targets are projected from per-run sizes
   (`services/agent/soak/README.md`), not observed.
 - **The ledger is not partitioned.** Retention deletes whole runs in batches; at
