@@ -1,5 +1,5 @@
-import type { PluginHooks } from "../core/agent.js";
-import type { PluginManifest } from "../contracts/plugin.js";
+import type { LoadedPlugin, PluginHooks } from "../core/agent.js";
+import { SpecError } from "../core/spec.js";
 import { pluginFor } from "./registry.js";
 import { rootCauseHooks } from "./rootcause/hooks.js";
 import { tallyHooks } from "./tally/hooks.js";
@@ -12,13 +12,21 @@ const HOOKS: Readonly<Record<string, PluginHooks>> = {
   tally: tallyHooks,
 };
 
-export interface Plugin {
-  manifest: PluginManifest;
-  hooks?: PluginHooks;
-}
+export type Plugin = LoadedPlugin;
 
 export function loadPlugin(id: string, hooks: Readonly<Record<string, PluginHooks>> = HOOKS): Plugin {
   const manifest = pluginFor(id);
   const own = hooks[id];
   return own === undefined ? { manifest } : { manifest, hooks: own };
+}
+
+// Plugins whose hooks are built per run from what only the worker holds -- the
+// directive queue, the console mirror -- and so cannot yet be handed work by
+// another plugin. Every other plugin, files alone or with hooks of its own, can.
+const NEEDS_WORKER = new Set(["hunt", "adjudicate", "compose", "chat"]);
+
+// What a delegation runs: the plugin, if another run may hand it work.
+export function delegablePlugin(id: string): Plugin {
+  if (NEEDS_WORKER.has(id)) throw new SpecError(`plugin ${id} cannot be handed work by another run yet: its hooks are built by the worker`);
+  return loadPlugin(id);
 }

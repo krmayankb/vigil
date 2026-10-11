@@ -46,6 +46,9 @@ export interface RegisteredTool {
   // Whether this tool answers in this process. Dispatch reads it: the remote one
   // posts an id to a backend that has never heard of the run's own ledger.
   readonly local: boolean;
+  // Whether several calls to it in one turn may run at once. Only for a tool whose
+  // calls touch nothing another call in the turn reads, such as handing work off.
+  readonly concurrent?: boolean;
   invoke(args: Record<string, unknown>): Promise<ToolResult>;
   close(): Promise<void>;
 }

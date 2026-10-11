@@ -236,6 +236,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       }
 
       this.transcript.push({ role: "assistant", content: turn.content, tool_calls: turn.tool_calls });
+      const started = this.startConcurrent(turn.tool_calls, fold);
       for (const call of turn.tool_calls) {
         const tool = this.tools.find((granted) => granted.id === call.tool);
         if (tool === undefined) {
@@ -254,7 +255,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield* this.record(call, gate.result, gate.checkpoint_id);
           continue;
         }
-        const measured = await this.invoke(tool, call.args);
+        const measured = await (started.get(call) ?? this.invoke(tool, call.args));
         yield* this.record(call, measured.result, gate.checkpoint_id, measured.duration_ms);
       }
     }
@@ -263,6 +264,29 @@ class Run<T, Kinds extends Record<string, unknown>> {
     // still answers over what it gathered, and says the set was truncated.
     this.capped = true;
     return null;
+  }
+
+  // Calls to a tool that may run alongside others, started together when a turn
+  // asks for more than one, up to the first call that would park. Their results are
+  // still recorded in the order the model asked for them, so the ledger reads the same.
+  private startConcurrent(calls: readonly ToolCall[], fold: Fold): Map<ToolCall, Promise<{ result: ToolResult; duration_ms: number }>> {
+    const started = new Map<ToolCall, Promise<{ result: ToolResult; duration_ms: number }>>();
+    const eligible: [ToolCall, RegisteredTool][] = [];
+    for (const call of calls) {
+      const tool = this.tools.find((granted) => granted.id === call.tool);
+      if (tool === undefined) continue;
+      const gate = this.gate(tool, call.args, fold);
+      if (gate.kind === "park") break;
+      if (tool.concurrent === true && gate.kind === "allowed" && gate.checkpoint_id === undefined) eligible.push([call, tool]);
+    }
+    if (eligible.length < 2) return started;
+    for (const [call, tool] of eligible) {
+      const running = this.invoke(tool, call.args);
+      // Awaited in order below; one that fails before its turn is still observed.
+      running.catch(() => undefined);
+      started.set(call, running);
+    }
+    return started;
   }
 
   // Stopped with turns in hand and next to nothing gathered, and not yet asked.
@@ -538,7 +562,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "spend", payload });
       return;
     }
-    const event = { run_id: to.run_id, run_kind: to.run_kind, kind: "spend", payload } as unknown as NewEvent<Kinds>;
+    const event = { run_id: to.run_id, run_kind: to.run_kind, kind: "spend", payload: { ...payload, spent_by: this.cfg.run_id } } as unknown as NewEvent<Kinds>;
     await this.harness.state.append(to.run_id, [event]);
   }
 

@@ -35,6 +35,9 @@ export interface SpendPayload {
   role: string;
   tokens: TokenCounts;
   cost_usd: number | null;
+  // Set when a child run's call is journaled on its parent's ledger: the child that
+  // made it, so what each child spent is read off the parent alone.
+  spent_by?: string;
   // How the rates resolved, or null when nothing priced it: a $0.00 from a catalog
   // entry and a $0.00 nobody could price are the same number and nothing alike.
   // "unknown" is that second case, kept as the string with null rates.

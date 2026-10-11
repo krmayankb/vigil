@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { archFor, KIND_PLUGINS } from "./plugins/kinds.js";
 import { runAgent, type AgentKinds, type StopSource } from "./core/agent.js";
-import { loadPlugin } from "./plugins/index.js";
+import { delegablePlugin, loadPlugin } from "./plugins/index.js";
 import { toolsFrom } from "./tools/remote.js";
 import { httpAnswers, journalAnswers, noAnswers, type Answers } from "./core/answers.js";
 import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
@@ -224,7 +224,7 @@ async function drive(
     // tools, the plugin's own and the skill loader, and grants by the plugin's needs.
     const done = await runAgent(harness, {
       run_id, run_kind: kind, spec, plugin: manifest, ...(hooks === undefined ? {} : { hooks }),
-      tools: toolsFrom(spec.tools), started_by, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
+      tools: toolsFrom(spec.tools), plugins: delegablePlugin, started_by, answers: answersFor(), announce: announceFor(), stop: stopFrom(directives, run_id), signal,
     });
     return done.status === "waiting_approval" ? done.reason : null;
   }

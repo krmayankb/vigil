@@ -12,7 +12,7 @@ import type { State } from "../../core/seams.js";
 import type { DirectiveQueue } from "./ports.js";
 import { buildReport } from "./report.js";
 import { toolsFrom } from "../../tools/remote.js";
-import { loadPlugin } from "../index.js";
+import { delegablePlugin, loadPlugin } from "../index.js";
 import { huntHooks } from "./hooks.js";
 import { stopFrom } from "../rootcause/workflow.js";
 
@@ -74,6 +74,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
     plugin: manifest,
     hooks,
     tools: toolsFrom(options.spec.tools),
+    plugins: delegablePlugin,
     started_by: options.started_by ?? "worker",
     // The hunt's own: declared subjects first, else what its statements name.
     recall_keys: recallKeysOf(huntSpec(options.spec)),

@@ -4,7 +4,7 @@ import type { Announce } from "../../core/checkpoints.js";
 import { runAgent, type AgentKinds, type StopSource } from "../../core/agent.js";
 import type { Harness, Outcome } from "../../core/loop.js";
 import { SpecError, type RunSpec } from "../../core/spec.js";
-import { loadPlugin } from "../index.js";
+import { delegablePlugin, loadPlugin } from "../index.js";
 import { toolsFrom } from "../../tools/remote.js";
 import type { DirectiveQueue } from "../hunt/ports.js";
 import type { NoticePayload, RootCauseKinds, StepPayload } from "./proof.js";
@@ -43,6 +43,7 @@ export async function runRootCause(harness: Harness<RootCauseKinds>, options: Ro
     plugin: manifest,
     ...(hooks === undefined ? {} : { hooks }),
     tools: toolsFrom(spec.tools),
+    plugins: delegablePlugin,
     ...(options.started_by === undefined ? {} : { started_by: options.started_by }),
     ...(options.answers === undefined ? {} : { answers: options.answers }),
     ...(options.announce === undefined ? {} : { announce: options.announce }),

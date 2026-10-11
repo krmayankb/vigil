@@ -75,6 +75,23 @@ export interface PluginManifest {
   // tools and is then asked for it, a model call of its own. tool: the agent calls
   // conclude with it, in the turn it decides, and that call ends the run.
   finish_with?: "ask" | "tool";
+  // Work this agent may hand to another plugin: each a tool by its verb, which runs
+  // that plugin as a run of its own and answers with what it concluded.
+  delegates?: DelegateSpec[];
+}
+
+// One kind of work handed off. The child runs the named plugin on a ledger of its
+// own, linked to its parent, on a share of what the parent has left to spend.
+export interface DelegateSpec {
+  // The tool's name, as the agent calls it: a verb, such as trace_root_cause.
+  verb: string;
+  plugin: string;
+  // What the agent reads to decide when to hand this off.
+  description: string;
+  // The part of the parent's remaining dollar budget the child may spend, 0-1.
+  budget_share: number;
+  // Tool turns the child may take; absent takes its plugin's own.
+  max_turns?: number;
 }
 
 export const RECORD_MODES = ["off", "available", "required"] as const;
