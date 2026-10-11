@@ -447,6 +447,7 @@ async function unreadShared(ctx: PluginContext): Promise<string | null> {
   if (updates.findings.length === 0) return null;
   const entities = [...new Set(updates.findings.map((one) => one.entity_key))].sort();
   const brief = updates.findings.map((one) => ({
+    finding_id: one.finding_id,
     run_id: one.run_id,
     entity: one.entity_key,
     kind: one.kind,
