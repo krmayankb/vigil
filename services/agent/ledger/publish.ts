@@ -1,3 +1,4 @@
+import { forModelsDeep } from "../core/guards.js";
 import type { AgentEvent, CallPayload, ConclusionPayload, HypothesisPayload, LinkPayload, NewEvent, ReviewPayload, RunPayload, TerminalPayload } from "../contracts/events.js";
 import { errorFields, logger } from "../core/log.js";
 import type { ReadOptions, State } from "../core/seams.js";
@@ -92,7 +93,7 @@ export class PublishingLedger<Kinds extends Record<string, unknown> = Record<nev
               claim_id: link.hypothesis_id,
               relation: link.relation,
               ref: link.evidence_id,
-              ...(call === undefined ? {} : { tool: call.tool, arguments: call.arguments.slice(0, EXCERPT), excerpt: call.result.slice(0, EXCERPT) }),
+              ...(call === undefined ? {} : { tool: call.tool, arguments: call.arguments.slice(0, EXCERPT), excerpt: (call.shown ?? call.result).slice(0, EXCERPT) }),
             },
             // A tool's result is text from outside, which an attacker may have written.
             attacker_influenceable: call !== undefined,
@@ -102,7 +103,8 @@ export class PublishingLedger<Kinds extends Record<string, unknown> = Record<nev
       }
       return concluded(held, event.payload as TerminalPayload, base, calls, sharedRefs);
     });
-    if (rows.length > 0) await this.shared.publish(rows);
+    // Other runs' models read these: a handle becomes a neutral marker (core/guards.ts).
+    if (rows.length > 0) await this.shared.publish(rows.map((row) => forModelsDeep(row)));
   }
 }
 

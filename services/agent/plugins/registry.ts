@@ -70,6 +70,9 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
   }
 
   const delegates = raw["delegates"] === undefined ? undefined : delegatesOf(raw["delegates"], id, where);
+  const q = raw["guards"] as { reader?: unknown; guidance?: unknown } | undefined;
+  if (q !== undefined && (typeof q?.reader !== "string" || typeof q?.guidance !== "string")) throw new SpecError(`${where}: guards needs reader and guidance`);
+  const guards = q === undefined ? undefined : { reader: q.reader as string, guidance: q.guidance as string };
 
   return {
     id,
@@ -84,6 +87,7 @@ export function parsePlugin(text: string, available: readonly SkillSpec[], where
     ...(min_results === undefined ? {} : { min_results: min_results as number }),
     ...(finish_with === undefined ? {} : { finish_with: finish_with as "ask" | "tool" }),
     ...(delegates === undefined ? {} : { delegates }),
+    ...(guards === undefined ? {} : { guards }),
   };
 }
 

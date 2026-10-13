@@ -78,6 +78,9 @@ export interface PluginManifest {
   // Work this agent may hand to another plugin: each a tool by its verb, which runs
   // that plugin as a run of its own and answers with what it concluded.
   delegates?: DelegateSpec[];
+  // Experimental (core/guards.ts), honoured only with VIGIL_GUARDS=on: the
+  // reader's prompt, and what the deciding agent is told, in this plugin's words.
+  guards?: { reader: string; guidance: string };
 }
 
 // One kind of work handed off. The child runs the named plugin on a ledger of its

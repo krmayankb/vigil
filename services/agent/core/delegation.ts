@@ -1,3 +1,4 @@
+import { forModels } from "./guards.js";
 import { createHash } from "node:crypto";
 import type { Budget, Refusal, Spend, SpendPayload } from "../contracts/budget.js";
 import type { CheckpointPayload, ConclusionPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
@@ -95,7 +96,8 @@ async function handOff(ctx: PluginContext, delegate: DelegateSpec, args: Record<
     const childSpec = {
       ...options.spec,
       name: `${options.spec.name} / ${delegate.verb}`,
-      prompt: task,
+      // The child is another model, holding none of this run's handles (core/guards.ts).
+      prompt: forModels(task),
       objectives: [],
       narrative: "",
       sections: { ...options.spec.sections, recall_keys: entities },

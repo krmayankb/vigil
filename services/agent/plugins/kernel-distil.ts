@@ -1,3 +1,4 @@
+import { forModelsDeep } from "../core/guards.js";
 import type { CallPayload, ConclusionPayload, FramePayload, LinkPayload, ReviewPayload, RunPayload, TerminalPayload } from "../contracts/events.js";
 import { CONCLUDE_TOOL, isAgentRun, SKILL_TOOL } from "../core/agent.js";
 import { LINK_TOOL, PROPOSE_TOOL, QUESTION_TOOL, recordOf } from "../core/record.js";
@@ -66,7 +67,13 @@ const OWN = new Set([CONCLUDE_TOOL, SKILL_TOOL, SHARED_TOOL, PROPOSE_TOOL, LINK_
 // What a run's answer says when it did not settle anything.
 const UNSETTLED = new Set(["needs_review", "inconclusive", "undetermined", "unknown"]);
 
+// Memory is read by later runs' models: a handle becomes a neutral marker, never its
+// value (core/guards.ts). A no-op with guards off.
 export function kernelDistil(runId: string, events: readonly Envelope[]): KernelDistilPayload {
+  return forModelsDeep(distilled(runId, events));
+}
+
+function distilled(runId: string, events: readonly Envelope[]): KernelDistilPayload {
   const terminalAt = events.findLastIndex((event) => event.kind === "terminal");
   const terminal = terminalAt === -1 ? null : (events[terminalAt]!.payload as TerminalPayload);
   const empty: KernelDistilPayload = {
